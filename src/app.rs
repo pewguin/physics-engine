@@ -166,11 +166,13 @@ impl ApplicationHandler for App<'_> {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         let now = Instant::now();
+        let vertecies = 1;
+        let vertexes = 1;
         if let Some(renderer) = &self.renderer {
             if let Some(window) = self.window.as_ref() {
                 window.request_redraw();
                 let delta = now - self.last_time;
-                let rotate = Quat::from_euler(EulerRot::ZXY, 0.0, 0.0, delta.as_secs_f32() * std::f32::consts::PI);
+                let rotate = Quat::from_euler(EulerRot::XYZ, delta.as_secs_f32() * 1.89, 0.0, 0.0) * Quat::from_euler(EulerRot::XYZ, 0.0, delta.as_secs_f32() * 2.0, 0.0);
                 self.meshes[0].rot = self.meshes[0].rot * rotate;
             }
         }

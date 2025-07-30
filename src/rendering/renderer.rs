@@ -2,10 +2,10 @@ use std::borrow::Cow;
 use futures::executor::block_on;
 use std::sync::Arc;
 use glam::{Mat4, Quat, Vec3};
-use wgpu::{Adapter, AddressMode, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferBinding, BufferBindingType, BufferUsages, Color, ColorTargetState, CompareFunction, DepthStencilState, Device, DeviceDescriptor, Extent3d, FilterMode, FragmentState, IndexFormat, Instance, InstanceDescriptor, InstanceFlags, Label, LoadOp, Operations, PipelineLayout, PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, Queue, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions, Sampler, SamplerBindingType, ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, Surface, SurfaceConfiguration, Texture, TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView, TextureViewDimension, VertexBufferLayout, VertexState};
+use wgpu::{Adapter, AddressMode, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferBinding, BufferBindingType, BufferUsages, Color, ColorTargetState, CompareFunction, DepthStencilState, Device, DeviceDescriptor, Extent3d, FilterMode, FragmentState, IndexFormat, Instance, InstanceDescriptor, InstanceFlags, Label, LoadOp, Operations, Origin2d, Origin3d, PipelineLayout, PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, Queue, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions, Sampler, SamplerBindingType, ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, Surface, SurfaceConfiguration, TexelCopyBufferLayout, TexelCopyTextureInfo, Texture, TextureAspect, TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView, TextureViewDimension, VertexBufferLayout, VertexState};
 use wgpu::Face::Back;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
-use wgpu::wgt::{BufferDescriptor, SamplerDescriptor, TextureDescriptor};
+use wgpu::wgt::{BufferDescriptor, SamplerDescriptor, TextureDescriptor, TextureViewDescriptor};
 use winit::dpi::Size;
 use winit::window::Window;
 use crate::rendering::mesh::Mesh;
@@ -95,6 +95,24 @@ impl Renderer<'_> {
                         min_binding_size: None,
                     },
                     count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Texture {
+                        sample_type: TextureSampleType::Float {
+                            filterable: true,
+                        },
+                        view_dimension: TextureViewDimension::D2,
+                        multisampled: false,
+                    },
+                    count: None,
+                },
+                BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: ShaderStages::FRAGMENT,
+                    ty: BindingType::Sampler(SamplerBindingType::Filtering),
+                    count: None,
                 }
             ],
         });
@@ -152,6 +170,8 @@ impl Renderer<'_> {
             contents: &bytemuck::cast_slice(&[time]),
         });
 
+        let (obama_tex, obama_view, obama_sampler) = Self::load_texture(&device, &queue, "assets/obama.webp");
+
         let global_bind_group = device.create_bind_group(&BindGroupDescriptor {
             label: Label::from("Global bind group"),
             layout: &global_bind_group_layout,
@@ -159,6 +179,14 @@ impl Renderer<'_> {
                 BindGroupEntry {
                     binding: 0,
                     resource: time_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::TextureView(&obama_view),
+                },
+                BindGroupEntry {
+                    binding: 2,
+                    resource: BindingResource::Sampler(&obama_sampler),
                 }
             ],
         });
@@ -280,5 +308,53 @@ impl Renderer<'_> {
             rot: Quat::IDENTITY,
             scale: Vec3::ONE
         }
+    }
+    pub fn load_texture(device: &Device, queue: &Queue, path: &str) -> (Texture, TextureView, Sampler) {
+        let img = image::open(path).unwrap();
+        let rgba = img.to_rgba8();
+        let (width, height) = rgba.dimensions();
+        let size = Extent3d {
+            width,
+            height,
+            depth_or_array_layers: 1,
+        };
+        let texture = device.create_texture(&TextureDescriptor {
+            label: Some("Obama"),
+            size,
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Rgba8UnormSrgb,
+            usage: TextureUsages::TEXTURE_BINDING | TextureUsages::COPY_DST,
+            view_formats: &[],
+        });
+        queue.write_texture(
+            TexelCopyTextureInfo {
+                texture: &texture,
+                mip_level: 0,
+                origin: Origin3d::ZERO,
+                aspect: TextureAspect::All,
+            },
+            &rgba,
+            TexelCopyBufferLayout {
+                offset: 0,
+                bytes_per_row: Some(4 * width),
+                rows_per_image: Some(height),
+            },
+            size
+        );
+        let view = texture.create_view(&TextureViewDescriptor::default());
+        let sampler = device.create_sampler(&SamplerDescriptor {
+            label: Some("Obama Sampler"),
+            address_mode_u: AddressMode::ClampToEdge,
+            address_mode_v: AddressMode::ClampToEdge,
+            address_mode_w: AddressMode::ClampToEdge,
+            mag_filter: FilterMode::Linear,
+            min_filter: FilterMode::Linear,
+            mipmap_filter: FilterMode::Nearest,
+            ..Default::default()
+        });
+
+        (texture, view, sampler)
     }
 }
