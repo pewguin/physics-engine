@@ -7,6 +7,7 @@ use winit::window::Window;
 
 mod app;
 mod rendering;
+mod physics;
 
 fn main() {
     env_logger::init();

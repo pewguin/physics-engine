@@ -14,6 +14,7 @@ use winit::event_loop::{ActiveEventLoop, EventLoop};
 use winit::monitor::VideoModeHandle;
 use winit::platform::x11::WindowAttributesExtX11;
 use winit::window::{Fullscreen, Window, WindowAttributes, WindowId};
+use crate::physics::world::World;
 use crate::rendering::mesh::Mesh;
 use crate::rendering::time::Time;
 use crate::rendering::vertex::Vertex;
@@ -24,6 +25,7 @@ pub struct App<'a> {
     pub renderer: Option<Renderer<'a>>,
     pub meshes: Vec<Mesh>,
     pub window: Option<Arc<Window>>,
+    pub world: World,
     last_time: Instant,
     start_time: Instant,
 }
@@ -34,6 +36,7 @@ impl App<'_> {
             renderer: None,
             meshes: Vec::new(),
             window: None,
+            world: World::new(),
             last_time: Instant::now(),
             start_time: Instant::now(),
         }
