@@ -8,6 +8,7 @@ use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::wgt::{BufferDescriptor, SamplerDescriptor, TextureDescriptor, TextureViewDescriptor};
 use winit::dpi::Size;
 use winit::window::Window;
+use crate::physics::world::World;
 use crate::rendering::mesh::Mesh;
 use crate::rendering::time::Time;
 use crate::rendering::vertex::Vertex;
@@ -227,7 +228,7 @@ impl Renderer<'_> {
             3000.0,
         );
     }
-    pub fn redraw(&self, meshes: &Vec<Mesh>, time: Time) {
+    pub fn redraw(&self, world: &World, time: Time) {
         let tex = self.surface.get_current_texture().unwrap();
         let view = tex.texture.create_view(&Default::default());
         let mut encoder = self.device.create_command_encoder(&Default::default());
@@ -260,10 +261,12 @@ impl Renderer<'_> {
         );
         render_pass.set_bind_group(1, &self.global_bind_group, &[]);
 
-        for mesh in meshes {
+        for id in world.meshes.keys().copied().into_iter() {
+            let (_, mesh) = world.meshes.get_key_value(&id).unwrap();
+            let (_, transform) = world.transforms.get_key_value(&id).unwrap();
             self.queue.write_buffer(
                 &mesh.uniform_buffer, 0, 
-                bytemuck::cast_slice(&(self.projection_matrix * mesh.get_transform()).to_cols_array())
+                bytemuck::cast_slice(&(self.projection_matrix * transform.get_transform()).to_cols_array())
             );
             render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
             render_pass.set_bind_group(0, &mesh.bind_group, &[]);
@@ -304,9 +307,6 @@ impl Renderer<'_> {
                 }],
             }),
             uniform_buffer,
-            pos: Vec3::ZERO,
-            rot: Quat::IDENTITY,
-            scale: Vec3::ONE
         }
     }
     pub fn load_texture(device: &Device, queue: &Queue, path: &str) -> (Texture, TextureView, Sampler) {
