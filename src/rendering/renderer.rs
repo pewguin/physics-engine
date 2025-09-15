@@ -4,6 +4,8 @@ use std::sync::Arc;
 use glam::{Mat4, Quat, Vec3};
 use wgpu::{Adapter, AddressMode, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferBinding, BufferBindingType, BufferUsages, Color, ColorTargetState, CompareFunction, DepthStencilState, Device, DeviceDescriptor, Extent3d, FilterMode, FragmentState, IndexFormat, Instance, InstanceDescriptor, InstanceFlags, Label, LoadOp, Operations, Origin2d, Origin3d, PipelineLayout, PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, Queue, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions, Sampler, SamplerBindingType, ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, Surface, SurfaceConfiguration, TexelCopyBufferLayout, TexelCopyTextureInfo, Texture, TextureAspect, TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView, TextureViewDimension, VertexBufferLayout, VertexState};
 use wgpu::Face::Back;
+use wgpu::hal::DepthStencilAttachment;
+use wgpu::naga::ImageClass::Depth;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::wgt::{BufferDescriptor, SamplerDescriptor, TextureDescriptor, TextureViewDescriptor};
 use winit::dpi::Size;
@@ -12,6 +14,7 @@ use crate::physics::world::World;
 use crate::rendering::mesh::Mesh;
 use crate::rendering::time::Time;
 use crate::rendering::vertex::Vertex;
+
 
 pub struct Renderer<'a> {
     surface: Surface<'a>,
@@ -22,6 +25,8 @@ pub struct Renderer<'a> {
     projection_matrix: Mat4,
     time_buffer: Buffer,
     global_bind_group: BindGroup,
+    depth_texture: Texture,
+    depth_texture_view: TextureView,
 }
 
 impl Renderer<'_> {
@@ -51,18 +56,20 @@ impl Renderer<'_> {
                 }),
         ).unwrap();
 
+        let surface_configuration = SurfaceConfiguration {
+            usage: TextureUsages::RENDER_ATTACHMENT,
+            format: TextureFormat::Rgba16Float,
+            width: 300,
+            height: 300,
+            present_mode: PresentMode::Fifo,
+            desired_maximum_frame_latency: 2,
+            alpha_mode: Default::default(),
+            view_formats: vec![TextureFormat::Rgba16Float],
+        };
+
         surface.configure(
             &device,
-            &SurfaceConfiguration {
-                usage: TextureUsages::RENDER_ATTACHMENT,
-                format: TextureFormat::Rgba16Float,
-                width: 300,
-                height: 300,
-                present_mode: PresentMode::Fifo,
-                desired_maximum_frame_latency: 2,
-                alpha_mode: Default::default(),
-                view_formats: vec![TextureFormat::Rgba16Float],
-            },
+            &surface_configuration,
         );
         
         let shader_module = device.create_shader_module(ShaderModuleDescriptor {
@@ -137,7 +144,13 @@ impl Renderer<'_> {
                 cull_mode: Some(Back),
                 ..Default::default()
             },
-            depth_stencil: None,
+            depth_stencil: Some(DepthStencilState {
+                format: TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: CompareFunction::LessEqual,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
             multisample: Default::default(),
             fragment: Some(FragmentState {
                 module: &shader_module,
@@ -191,6 +204,9 @@ impl Renderer<'_> {
                 }
             ],
         });
+
+        let (depth_texture, depth_texture_view) = Self::create_depth_texture(&device, surface_configuration.width, surface_configuration.height);
+
         Renderer { 
             surface,
             device,
@@ -200,6 +216,8 @@ impl Renderer<'_> {
             projection_matrix,
             time_buffer,
             global_bind_group,
+            depth_texture,
+            depth_texture_view,
         }
     }
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -227,6 +245,10 @@ impl Renderer<'_> {
             0.0001,
             3000.0,
         );
+
+        let (depth_texture, depth_texture_view) = Self::create_depth_texture(&self.device, width, height);
+        self.depth_texture = depth_texture;
+        self.depth_texture_view = depth_texture_view;
     }
     pub fn redraw(&self, world: &World, time: Time) {
         let tex = self.surface.get_current_texture().unwrap();
@@ -240,16 +262,18 @@ impl Renderer<'_> {
                 depth_slice: None,
                 resolve_target: None,
                 ops: Operations {
-                    load: LoadOp::Clear(Color {
-                        r: 0.0,
-                        g: 0.0,
-                        b: 0.0,
-                        a: 1.0,
-                    }),
+                    load: LoadOp::Clear(Color::BLACK),
                     store: StoreOp::Store,
                 },
             })],
-            depth_stencil_attachment: None,
+            depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                view: &self.depth_texture_view,
+                depth_ops: Some(Operations {
+                    load: LoadOp::Clear(1.0),
+                    store: StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
             timestamp_writes: None,
             occlusion_query_set: None,
         });
@@ -356,5 +380,25 @@ impl Renderer<'_> {
         });
 
         (texture, view, sampler)
+    }
+
+    pub fn create_depth_texture(device: &Device, width: u32, height: u32) -> (Texture, TextureView) {
+        let depth_texture = device.create_texture(&TextureDescriptor {
+            label: Some("depth texture"),
+            size: Extent3d {
+                width: width,
+                height: height,
+                depth_or_array_layers: 1,
+            },
+            mip_level_count: 1,
+            sample_count: 1,
+            dimension: TextureDimension::D2,
+            format: TextureFormat::Depth32Float,
+            usage: TextureUsages::RENDER_ATTACHMENT | TextureUsages::TEXTURE_BINDING,
+            view_formats: &[],
+        });
+        let depth_texture_view = depth_texture.create_view(&TextureViewDescriptor::default());
+
+        (depth_texture, depth_texture_view)
     }
 }

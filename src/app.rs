@@ -1,14 +1,16 @@
+use std::f32::consts::PI;
 use crate::rendering::renderer::Renderer;
 use crate::rendering::time::Time;
 use crate::rendering::transform::Transform;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
-use glam::{Quat, Vec3};
+use glam::{EulerRot, Quat, Vec3};
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowAttributes, WindowId};
 use crate::physics::world::World;
+use crate::rendering::mesh::Mesh;
 use crate::rendering::vertex::Vertex;
 
 pub struct AppState {}
@@ -34,57 +36,24 @@ impl App<'_> {
 }
 impl ApplicationHandler for App<'_> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
-        let window_attributes = WindowAttributes::default();//.with_name("renderer", "of things");
+        let window_attributes = WindowAttributes::default();
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
         self.window = Some(window.clone());
         let mut renderer = Renderer::new(
             window
         );
 
-        let vertices = vec![
-            Vertex { position: [-1.0, -1.0,  1.0], uv: [0.0, 0.0] },
-            Vertex { position: [ 1.0, -1.0,  1.0], uv: [1.0, 0.0] },
-            Vertex { position: [ 1.0,  1.0,  1.0], uv: [1.0, 1.0] },
-            Vertex { position: [-1.0,  1.0,  1.0], uv: [0.0, 1.0] },
+        let floor = Mesh::create_cube(&mut renderer);
+        let mut floor_transform = Transform::default();
+        floor_transform.pos += Vec3::NEG_Y * 3.0;
+        floor_transform.scale = Vec3::new(1.0, 0.1, 1.0) * 10.0;
+        self.world.add_mesh(0, floor_transform, Vec3::ZERO, floor);
 
-            Vertex { position: [ 1.0, -1.0, -1.0], uv: [0.0, 0.0] },
-            Vertex { position: [-1.0, -1.0, -1.0], uv: [1.0, 0.0] },
-            Vertex { position: [-1.0,  1.0, -1.0], uv: [1.0, 1.0] },
-            Vertex { position: [ 1.0,  1.0, -1.0], uv: [0.0, 1.0] },
-
-            Vertex { position: [-1.0, -1.0, -1.0], uv: [0.0, 0.0] },
-            Vertex { position: [-1.0, -1.0,  1.0], uv: [1.0, 0.0] },
-            Vertex { position: [-1.0,  1.0,  1.0], uv: [1.0, 1.0] },
-            Vertex { position: [-1.0,  1.0, -1.0], uv: [0.0, 1.0] },
-
-            Vertex { position: [ 1.0, -1.0,  1.0], uv: [0.0, 0.0] },
-            Vertex { position: [ 1.0, -1.0, -1.0], uv: [1.0, 0.0] },
-            Vertex { position: [ 1.0,  1.0, -1.0], uv: [1.0, 1.0] },
-            Vertex { position: [ 1.0,  1.0,  1.0], uv: [0.0, 1.0] },
-
-            Vertex { position: [-1.0,  1.0,  1.0], uv: [0.0, 0.0] },
-            Vertex { position: [ 1.0,  1.0,  1.0], uv: [1.0, 0.0] },
-            Vertex { position: [ 1.0,  1.0, -1.0], uv: [1.0, 1.0] },
-            Vertex { position: [-1.0,  1.0, -1.0], uv: [0.0, 1.0] },
-
-            Vertex { position: [-1.0, -1.0, -1.0], uv: [0.0, 0.0] },
-            Vertex { position: [ 1.0, -1.0, -1.0], uv: [1.0, 0.0] },
-            Vertex { position: [ 1.0, -1.0,  1.0], uv: [1.0, 1.0] },
-            Vertex { position: [-1.0, -1.0,  1.0], uv: [0.0, 1.0] },
-        ];
-        let indices = vec![
-            0,  1,  2,  0,  2,  3,   // Front
-            4,  5,  6,  4,  6,  7,   // Back
-            8,  9, 10,  8, 10, 11,   // Left
-            12, 13, 14, 12, 14, 15,   // Right
-            16, 17, 18, 16, 18, 19,   // Top
-            20, 21, 22, 20, 22, 23,   // Bottom
-        ];
-
-        let mesh = renderer.create_mesh(vertices, indices);
-        let mut transform = Transform::default();
-        transform.pos += Vec3::NEG_Z * 4.0;
-        self.world.add_mesh(0, transform, Vec3::ZERO, mesh);
+        let cube = Mesh::create_cube(&mut renderer);
+        let mut cube_transform = Transform::default();
+        cube_transform.pos += Vec3::NEG_Z * 3.0;
+        cube_transform.rot *= Quat::from_euler(EulerRot::XYZ, PI / 4.0, 0.0, PI / 4.0);
+        self.world.add_mesh(1, cube_transform, Vec3::ZERO, cube);
                 
         self.renderer = Some(renderer);
     }
@@ -122,9 +91,10 @@ impl ApplicationHandler for App<'_> {
         if let Some(renderer) = &self.renderer {
             if let Some(window) = self.window.as_ref() {
                 let run_duration = (now - self.start_time);
-                self.world.transforms.get_mut(&0).unwrap().rot = Quat::from_euler(glam::EulerRot::XYZ, 0.0, run_duration.as_secs_f32(), 0.0);
-                self.world.transforms.get_mut(&0).unwrap().pos = (Vec3::Y * run_duration.as_secs_f32().sin() * 2.0) + Vec3::NEG_Z * 4.0;
-                window.request_redraw();
+                let delta_time = self.last_time - now;
+
+                self.world.transforms.get_mut(&1).unwrap().pos += Vec3::NEG_Y * 0.2 * delta_time.as_secs_f32();
+                println!("{}", self.world.transforms.get_mut(&1).unwrap().pos.y)
             }
         }
         self.last_time = now;
