@@ -5,12 +5,13 @@ use crate::rendering::transform::Transform;
 use std::sync::{Arc, RwLock};
 use std::time::Instant;
 use glam::{EulerRot, Quat, Vec3};
+use wgpu::VertexStepMode::Instance;
 use winit::application::ApplicationHandler;
 use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowAttributes, WindowId};
 use crate::physics::world::World;
-use crate::rendering::mesh::Mesh;
+use crate::physics::mesh::Mesh;
 use crate::rendering::vertex::Vertex;
 
 pub struct AppState {}
@@ -19,6 +20,7 @@ pub struct App<'a> {
     pub renderer: Option<Renderer<'a>>,
     pub window: Option<Arc<Window>>,
     pub world: World,
+    time: Time,
     last_time: Instant,
     start_time: Instant,
 }
@@ -29,6 +31,10 @@ impl App<'_> {
             renderer: None,
             window: None,
             world: World::new(),
+            time: Time {
+                total: 0.0,
+                delta: 0.0,
+            },
             last_time: Instant::now(),
             start_time: Instant::now(),
         }
@@ -43,16 +49,18 @@ impl ApplicationHandler for App<'_> {
             window
         );
 
-        let floor = Mesh::create_cube(&mut renderer);
+        let floor = Mesh::cube();
         let mut floor_transform = Transform::default();
         floor_transform.pos += Vec3::NEG_Y * 3.0;
         floor_transform.scale = Vec3::new(1.0, 0.1, 1.0) * 10.0;
+        renderer.create_buffered_mesh(0, &floor);
         self.world.add_mesh(0, floor_transform, Vec3::ZERO, floor);
 
-        let cube = Mesh::create_cube(&mut renderer);
+        let cube = Mesh::cube();
         let mut cube_transform = Transform::default();
         cube_transform.pos += Vec3::NEG_Z * 3.0;
         cube_transform.rot *= Quat::from_euler(EulerRot::XYZ, PI / 4.0, 0.0, PI / 4.0);
+        renderer.create_buffered_mesh(1, &cube);
         self.world.add_mesh(1, cube_transform, Vec3::ZERO, cube);
                 
         self.renderer = Some(renderer);
@@ -75,11 +83,7 @@ impl ApplicationHandler for App<'_> {
             }
             WindowEvent::RedrawRequested => {
                 if let Some(renderer) = &self.renderer {
-                    let time = Time {
-                        total: self.start_time.elapsed().as_secs_f32(),
-                        delta: self.start_time.elapsed().as_secs_f32(),
-                    };
-                    renderer.redraw(&self.world, time);
+                    renderer.redraw(&self.world, self.time);
                 }
             }
             _ => {}
@@ -87,16 +91,19 @@ impl ApplicationHandler for App<'_> {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        let now = Instant::now();
+        self.time = Time {
+            total: self.start_time.elapsed().as_secs_f32(),
+            delta: self.last_time.elapsed().as_secs_f32(),
+        };
         if let Some(renderer) = &self.renderer {
             if let Some(window) = self.window.as_ref() {
-                let run_duration = (now - self.start_time);
-                let delta_time = self.last_time - now;
-
-                self.world.transforms.get_mut(&1).unwrap().pos += Vec3::NEG_Y * 0.2 * delta_time.as_secs_f32();
-                println!("{}", self.world.transforms.get_mut(&1).unwrap().pos.y)
+                let pos_ref = match self.world.transforms.get_mut(&1) {
+                    Some(transform) => &mut transform.pos,
+                    None => panic!(),
+                };
+                *pos_ref += Vec3::NEG_Y * 0.1 * self.time.delta;
             }
+            renderer.redraw(&self.world, self.time);
         }
-        self.last_time = now;
     }
 }

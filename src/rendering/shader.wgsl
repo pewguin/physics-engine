@@ -1,4 +1,4 @@
-struct Uniform {
+struct Matrix {
     model: mat4x4<f32>
 }
 
@@ -7,15 +7,30 @@ struct Time {
     total: f32,
 }
 
+// G0: Texture Bindings
+//   B0: Obama texture
+//   B1: Obama view
+// G1: Frame Bindings
+//   B0: Time
+//   B1: View matrix
+//   B2: Projection matrix
+// G2: Mesh Bindings
+//   B0: Model matrix
+
 @group(0) @binding(0)
-var<uniform> uniforms: Uniform;
+var obama: texture_2d<f32>;
+@group(0) @binding(1)
+var obama_sampler: sampler;
 
 @group(1) @binding(0)
 var<uniform> time: Time;
 @group(1) @binding(1)
-var obama: texture_2d<f32>;
+var<uniform> view_matrix: Matrix;
 @group(1) @binding(2)
-var obama_sampler: sampler;
+var<uniform> projection_matrix: Matrix;
+
+@group(2) @binding(0)
+var<uniform> model_matrix: Matrix;
 
 struct VertexInput {
     @location(0) pos: vec3<f32>,
@@ -30,7 +45,7 @@ struct VertexOutput {
 @vertex
 fn vs_main(in: VertexInput) -> VertexOutput {
     let local = vec4<f32>(in.pos, 1.0);
-    let clip = uniforms.model * local;
+    let clip = projection_matrix.model * view_matrix.model * model_matrix.model * local;
 
     var out: VertexOutput;
     out.clip_pos = clip;

@@ -1,5 +1,5 @@
 pub mod renderer;
 pub mod vertex;
-pub mod mesh;
 pub mod time;
 pub mod transform;
+pub mod buffered_mesh;

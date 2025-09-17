@@ -1,4 +1,5 @@
 use std::borrow::Cow;
+use std::collections::HashMap;
 use futures::executor::block_on;
 use std::sync::Arc;
 use glam::{Mat4, Quat, Vec3};
@@ -11,10 +12,11 @@ use wgpu::wgt::{BufferDescriptor, SamplerDescriptor, TextureDescriptor, TextureV
 use winit::dpi::Size;
 use winit::window::Window;
 use crate::physics::world::World;
-use crate::rendering::mesh::Mesh;
+use crate::physics::mesh::Mesh;
+use crate::rendering::buffered_mesh::BufferedMesh;
 use crate::rendering::time::Time;
+use crate::rendering::transform::Transform;
 use crate::rendering::vertex::Vertex;
-
 
 pub struct Renderer<'a> {
     surface: Surface<'a>,
@@ -24,12 +26,24 @@ pub struct Renderer<'a> {
     mesh_bind_group_layout: BindGroupLayout,
     projection_matrix: Mat4,
     time_buffer: Buffer,
-    global_bind_group: BindGroup,
+    projection_buffer: Buffer,
+    view_buffer: Buffer,
+    frame_bind_group: BindGroup,
+    texture_bind_group: BindGroup,
     depth_texture: Texture,
     depth_texture_view: TextureView,
+    camera_transform: Transform,
+    buffered_meshes: HashMap<u32, BufferedMesh>,
 }
 
 impl Renderer<'_> {
+    /// Creates a new renderer with a target surface.
+    /// # Arguments
+    ///
+    /// * `window`:
+    /// Window to render to
+    ///
+    /// returns: Renderer
     pub fn new(window: Arc<Window>) -> Self {
         let wgpu = Instance::new(&InstanceDescriptor {
             backends: Backends::GL,
@@ -71,29 +85,36 @@ impl Renderer<'_> {
             &device,
             &surface_configuration,
         );
-        
+
+        // Prepare shader code
         let shader_module = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("main"),
             source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader.wgsl"))),
         });
 
+        // Layout for data passed to shader for each mesh. Updated per mesh.
         let mesh_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
-            label: Label::from("Mesh Uniform"),
-            entries: &[BindGroupLayoutEntry {
-                binding: 0,
-                visibility: ShaderStages::VERTEX,
-                ty: BindingType::Buffer {
-                    ty: BufferBindingType::Uniform,
-                    has_dynamic_offset: false,
-                    min_binding_size: None,
+            label: Label::from("Mesh bindings layout"),
+            entries: &[
+                // Model matrix
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::VERTEX,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
                 },
-                count: None,
-            }],
+            ],
         });
 
-        let global_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+        // Layout for data passed to all meshes. Updated per frame.
+        let frame_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Label::from("Global bindings"),
             entries: &[
+                // Time binding
                 BindGroupLayoutEntry {
                     binding: 0,
                     visibility: ShaderStages::FRAGMENT | ShaderStages::VERTEX,
@@ -104,8 +125,38 @@ impl Renderer<'_> {
                     },
                     count: None,
                 },
+                // View
                 BindGroupLayoutEntry {
                     binding: 1,
+                    visibility: ShaderStages::VERTEX,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Project
+                BindGroupLayoutEntry {
+                    binding: 2,
+                    visibility: ShaderStages::VERTEX,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
+        // Layout for texture data passed to shader. Updated rarely.
+        let texture_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Some("texture bind group layout"),
+            entries: &[
+                // Texture
+                BindGroupLayoutEntry {
+                    binding: 0,
                     visibility: ShaderStages::FRAGMENT,
                     ty: BindingType::Texture {
                         sample_type: TextureSampleType::Float {
@@ -116,18 +167,19 @@ impl Renderer<'_> {
                     },
                     count: None,
                 },
+                // Texture sampler
                 BindGroupLayoutEntry {
-                    binding: 2,
+                    binding: 1,
                     visibility: ShaderStages::FRAGMENT,
                     ty: BindingType::Sampler(SamplerBindingType::Filtering),
                     count: None,
-                }
+                },
             ],
         });
 
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Label::from("Pipeline layout"),
-            bind_group_layouts: &[&mesh_bind_group_layout, &global_bind_group_layout],
+            bind_group_layouts: &[&texture_bind_group_layout, &frame_bind_group_layout, &mesh_bind_group_layout,],
             push_constant_ranges: &[],
         });
 
@@ -178,17 +230,32 @@ impl Renderer<'_> {
             delta: 0.0,
         };
 
+        let camera_transform = Transform {
+            scale: Vec3::ONE,
+            rot: Quat::IDENTITY,
+            pos: Vec3::ZERO,
+        };
+
         let time_buffer = device.create_buffer_init(&BufferInitDescriptor {
             label: Label::from("Time buffer"),
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
             contents: &bytemuck::cast_slice(&[time]),
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        });
+        let projection_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Label::from("Projection buffer"),
+            contents: &bytemuck::cast_slice(&projection_matrix.to_cols_array()),
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        });
+        let view_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Label::from("View buffer"),
+            contents: &bytemuck::cast_slice(&camera_transform.as_matrix().to_cols_array()),
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
         });
 
-        let (obama_tex, obama_view, obama_sampler) = Self::load_texture(&device, &queue, "assets/obama.webp");
-
-        let global_bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: Label::from("Global bind group"),
-            layout: &global_bind_group_layout,
+        // Bindings for all meshes each frame
+        let frame_bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: Label::from("frame bind group"),
+            layout: &frame_bind_group_layout,
             entries: &[
                 BindGroupEntry {
                     binding: 0,
@@ -196,17 +263,35 @@ impl Renderer<'_> {
                 },
                 BindGroupEntry {
                     binding: 1,
-                    resource: BindingResource::TextureView(&obama_view),
+                    resource: projection_buffer.as_entire_binding(),
                 },
                 BindGroupEntry {
                     binding: 2,
-                    resource: BindingResource::Sampler(&obama_sampler),
+                    resource: view_buffer.as_entire_binding(),
+                }
+            ],
+        });
+
+        let (_, obama_view, obama_sampler) = Self::load_texture(&device, &queue, "assets/obama.webp");
+
+        let texture_bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: Label::from("Texture bind group"),
+            layout: &texture_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: BindingResource::TextureView(&obama_view)
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: BindingResource::Sampler(&obama_sampler)
                 }
             ],
         });
 
         let (depth_texture, depth_texture_view) = Self::create_depth_texture(&device, surface_configuration.width, surface_configuration.height);
 
+        let buffered_meshes = HashMap::<u32, BufferedMesh>::new();
         Renderer { 
             surface,
             device,
@@ -215,9 +300,14 @@ impl Renderer<'_> {
             mesh_bind_group_layout,
             projection_matrix,
             time_buffer,
-            global_bind_group,
+            frame_bind_group,
             depth_texture,
             depth_texture_view,
+            camera_transform,
+            projection_buffer,
+            view_buffer,
+            texture_bind_group,
+            buffered_meshes,
         }
     }
     pub fn resize(&mut self, width: u32, height: u32) {
@@ -234,18 +324,12 @@ impl Renderer<'_> {
                 view_formats: vec![TextureFormat::Rgba16Float],
             }
         );
-        self.projection_matrix = Mat4::orthographic_rh_gl(
-            -(width as f32) / 2.0, width as f32 / 2.0,
-            -(height as f32) / 2.0, height as f32 / 2.0,
-            -1.0, 1.0
-        );
         self.projection_matrix = Mat4::perspective_rh_gl(
             90.0_f32.to_radians(),
             width as f32 / height as f32,
             0.0001,
             3000.0,
         );
-
         let (depth_texture, depth_texture_view) = Self::create_depth_texture(&self.device, width, height);
         self.depth_texture = depth_texture;
         self.depth_texture_view = depth_texture_view;
@@ -279,23 +363,28 @@ impl Renderer<'_> {
         });
 
         render_pass.set_pipeline(&self.pipeline);
+        render_pass.set_bind_group(0, &self.texture_bind_group, &[]);
         self.queue.write_buffer(
             &self.time_buffer, 0,
             bytemuck::cast_slice(&[time]),
         );
-        render_pass.set_bind_group(1, &self.global_bind_group, &[]);
+        self.queue.write_buffer(
+            &self.view_buffer, 0,
+            bytemuck::cast_slice(&self.camera_transform.as_matrix().to_cols_array()),
+        );
+        render_pass.set_bind_group(1, &self.frame_bind_group, &[]);
 
         for id in world.meshes.keys().copied().into_iter() {
-            let (_, mesh) = world.meshes.get_key_value(&id).unwrap();
-            let (_, transform) = world.transforms.get_key_value(&id).unwrap();
-            self.queue.write_buffer(
-                &mesh.uniform_buffer, 0, 
-                bytemuck::cast_slice(&(self.projection_matrix * transform.get_transform()).to_cols_array())
-            );
-            render_pass.set_vertex_buffer(0, mesh.vertex_buffer.slice(..));
-            render_pass.set_bind_group(0, &mesh.bind_group, &[]);
-            render_pass.set_index_buffer(mesh.index_buffer.slice(..), IndexFormat::Uint16);
-            render_pass.draw_indexed(0..mesh.index_count, 0, 0..1);
+            let mesh = world.meshes.get(&id).unwrap();
+            let transform = world.transforms.get(&id).unwrap();
+            let buffered_mesh= self.buffered_meshes.get(&id).unwrap();
+
+            self.queue.write_buffer(&buffered_mesh.transform_buffer, 0, bytemuck::cast_slice(&transform.as_matrix().to_cols_array()));
+
+            render_pass.set_vertex_buffer(0, buffered_mesh.vertex_buffer.slice(..));
+            render_pass.set_bind_group(2, &buffered_mesh.bind_group, &[]);
+            render_pass.set_index_buffer(buffered_mesh.index_buffer.slice(..), IndexFormat::Uint16);
+            render_pass.draw_indexed(0..mesh.indices.len() as u32, 0, 0..1);
         }
         drop(render_pass);
 
@@ -303,35 +392,36 @@ impl Renderer<'_> {
         tex.present();
     }
 
-    pub fn create_mesh(&mut self, verts: Vec<Vertex>, indices: Vec<u16>) -> Mesh {
-        let uniform_buffer = self.device.create_buffer_init(&BufferInitDescriptor {
-            label: Label::from("Uniform Buffer"),
-            contents: &bytemuck::cast_slice(&self.projection_matrix.to_cols_array()),
+    pub fn create_buffered_mesh(&mut self, id: u32, mesh: &Mesh) {
+        let transform_buffer = self.device.create_buffer_init(&BufferInitDescriptor {
+            label: Label::from("transform buffer"),
+            contents: &bytemuck::cast_slice(&Mat4::IDENTITY.to_cols_array()),
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
         });
-        Mesh {
+        let bf_mesh = BufferedMesh {
             vertex_buffer: self.device.create_buffer_init(&BufferInitDescriptor {
                 label: Label::from("Vertex Buffer"),
-                contents: &bytemuck::cast_slice(&verts),
+                contents: &bytemuck::cast_slice(&mesh.vertexes),
                 usage: BufferUsages::VERTEX,
             }),
-            vertex_count: verts.len() as u32,
             index_buffer: self.device.create_buffer_init(&BufferInitDescriptor {
                 label: Label::from("Index Buffer"),
-                contents: &bytemuck::cast_slice(&indices),
+                contents: &bytemuck::cast_slice(&mesh.indices),
                 usage: BufferUsages::INDEX,
             }),
-            index_count: indices.len() as u32,
             bind_group: self.device.create_bind_group(&BindGroupDescriptor {
-                label: Label::from("Mesh Uniform Bind Group"),
+                label: Label::from("Mesh bindings"),
                 layout: &self.mesh_bind_group_layout,
-                entries: &[BindGroupEntry {
-                    binding: 0,
-                    resource: uniform_buffer.as_entire_binding(),
-                }],
+                entries: &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: transform_buffer.as_entire_binding(),
+                    }
+                ],
             }),
-            uniform_buffer,
-        }
+            transform_buffer,
+        };
+        self.buffered_meshes.insert(id, bf_mesh);
     }
     pub fn load_texture(device: &Device, queue: &Queue, path: &str) -> (Texture, TextureView, Sampler) {
         let img = image::open(path).unwrap();

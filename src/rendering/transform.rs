@@ -8,7 +8,7 @@ pub struct Transform {
 }
 
 impl Transform {
-    pub fn get_transform(&self) -> Mat4 {
+    pub fn as_matrix(&self) -> Mat4 {
         Mat4::from_scale_rotation_translation(self.scale, self.rot, self.pos)
     }
 }

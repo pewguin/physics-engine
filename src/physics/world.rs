@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use glam::Vec3;
-use crate::rendering::mesh::Mesh;
+use crate::physics::mesh::Mesh;
 use crate::rendering::renderer;
 use crate::rendering::transform::Transform;
 
