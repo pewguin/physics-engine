@@ -1,3 +1,5 @@
+use std::ffi::c_void;
+use std::ops;
 use bytemuck::{Pod, Zeroable};
 use wgpu::{vertex_attr_array, BufferAddress, VertexBufferLayout, VertexStepMode};
 
@@ -17,4 +19,18 @@ impl Vertex {
             1 => Float32x2,
         ],
     };
+}
+
+impl ops::Mul<f32> for Vertex {
+    type Output = Vertex;
+    fn mul(self, rhs: f32) -> Self::Output {
+        Self {
+            position: [
+                self.position[0] * rhs,
+                self.position[1] * rhs,
+                self.position[2] * rhs,
+            ],
+            uv: self.uv
+        }
+    }
 }

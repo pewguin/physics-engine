@@ -1,9 +1,5 @@
 use crate::app::App;
-use crate::rendering::renderer::Renderer;
-use log::error;
-use wgpu::Surface;
 use winit::event_loop::{ControlFlow, EventLoop};
-use winit::window::Window;
 
 mod app;
 mod rendering;

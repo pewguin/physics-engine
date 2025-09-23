@@ -1,22 +1,19 @@
-use std::borrow::Cow;
-use std::collections::HashMap;
-use futures::executor::block_on;
-use std::sync::Arc;
-use glam::{Mat4, Quat, Vec3};
-use wgpu::{Adapter, AddressMode, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferBinding, BufferBindingType, BufferUsages, Color, ColorTargetState, CompareFunction, DepthStencilState, Device, DeviceDescriptor, Extent3d, FilterMode, FragmentState, IndexFormat, Instance, InstanceDescriptor, InstanceFlags, Label, LoadOp, Operations, Origin2d, Origin3d, PipelineLayout, PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, Queue, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions, Sampler, SamplerBindingType, ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, Surface, SurfaceConfiguration, TexelCopyBufferLayout, TexelCopyTextureInfo, Texture, TextureAspect, TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView, TextureViewDimension, VertexBufferLayout, VertexState};
-use wgpu::Face::Back;
-use wgpu::hal::DepthStencilAttachment;
-use wgpu::naga::ImageClass::Depth;
-use wgpu::util::{BufferInitDescriptor, DeviceExt};
-use wgpu::wgt::{BufferDescriptor, SamplerDescriptor, TextureDescriptor, TextureViewDescriptor};
-use winit::dpi::Size;
-use winit::window::Window;
-use crate::physics::world::World;
 use crate::physics::mesh::Mesh;
+use crate::physics::world::World;
 use crate::rendering::buffered_mesh::BufferedMesh;
 use crate::rendering::time::Time;
 use crate::rendering::transform::Transform;
 use crate::rendering::vertex::Vertex;
+use futures::executor::block_on;
+use glam::{Mat4, Quat, Vec3};
+use std::borrow::Cow;
+use std::collections::HashMap;
+use std::sync::Arc;
+use wgpu::util::{BufferInitDescriptor, DeviceExt};
+use wgpu::wgt::{SamplerDescriptor, TextureDescriptor, TextureViewDescriptor};
+use wgpu::Face::Back;
+use wgpu::{AddressMode, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferBindingType, BufferUsages, Color, ColorTargetState, CompareFunction, DepthStencilState, Device, DeviceDescriptor, Extent3d, FilterMode, FragmentState, IndexFormat, Instance, InstanceDescriptor, InstanceFlags, Label, LoadOp, Operations, Origin3d, PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, Queue, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions, Sampler, SamplerBindingType, ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, Surface, SurfaceConfiguration, TexelCopyBufferLayout, TexelCopyTextureInfo, Texture, TextureAspect, TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView, TextureViewDimension, VertexState};
+use winit::window::Window;
 
 pub struct Renderer<'a> {
     surface: Surface<'a>,
@@ -476,8 +473,8 @@ impl Renderer<'_> {
         let depth_texture = device.create_texture(&TextureDescriptor {
             label: Some("depth texture"),
             size: Extent3d {
-                width: width,
-                height: height,
+                width,
+                height,
                 depth_or_array_layers: 1,
             },
             mip_level_count: 1,
