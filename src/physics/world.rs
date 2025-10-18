@@ -7,7 +7,7 @@ use crate::physics::rigid_body::RigidBody;
 
 pub struct World {
     pub transforms: HashMap<u32, Transform>,
-    pub colliders: HashMap<u32, ColliderShape>,
+    pub colliders: HashMap<u32, Box<dyn ColliderShape>>,
     pub rigid_bodies: HashMap<u32, RigidBody>,
     pub meshes: HashMap<u32, Mesh>,
 }
@@ -20,16 +20,21 @@ impl World {
             colliders: HashMap::new(),
         }
     }
-    pub fn add_mesh(&mut self, id: u32, collider_shape: ColliderShape, position: Transform, mesh: Mesh, rigid_body: RigidBody) {
+    pub fn add_mesh(&mut self, id: u32, collider_shape: impl ColliderShape + 'static, position: Transform, mesh: Mesh) {
         self.transforms.insert(id, position);
-        self.colliders.insert(id, collider_shape);
+        self.colliders.insert(id, Box::new(collider_shape));
+        self.meshes.insert(id, mesh);
+    }
+    pub fn add_object(&mut self, id: u32, collider_shape: impl ColliderShape + 'static, position: Transform, mesh: Mesh, rigid_body: RigidBody) {
+        self.transforms.insert(id, position);
+        self.colliders.insert(id, Box::new(collider_shape));
         self.rigid_bodies.insert(id, rigid_body);
         self.meshes.insert(id, mesh);
     }
-    pub fn get_transformed_collider(&self, id: u32) -> Option<ColliderShape> {
+    pub fn get_transformed_collider(&self, id: u32) -> Option<Box<dyn ColliderShape>> {
         if let Some(col) = self.colliders.get(&id) {
             if let Some(trans) = self.transforms.get(&id) {
-                return ColliderShape::transform_collider(col, trans)
+                return Some(col.transform(trans));
             }
         }
         None

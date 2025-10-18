@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use glam::{EulerRot, Quat, Vec3};
-use crate::physics::collider::{ColliderBox, ColliderShape, AABB};
+use crate::physics::collider::ColliderShape;
 use crate::physics::mesh::Mesh;
 use crate::physics::rigid_body::{CollisionType, RigidBody};
 use crate::physics::world::World;
@@ -32,19 +32,18 @@ impl SpatialGrid {
     }
     pub fn calculate_all_static_object_occupancies(&mut self, world: &World) {
         for id in self.static_objects.iter().copied().collect::<Vec<u32>>() {
-            self.calculate_object_occupancy(&world.get_transformed_collider(id).unwrap(), id, true);
+            self.calculate_object_occupancy(world.get_transformed_collider(id).unwrap(), id, true);
         }
     }
     pub fn calculate_dynamic_object_occupancies(&mut self, world: &World) {
         for id in self.dynamic_objects.iter().copied().collect::<Vec<u32>>() {
-            self.calculate_object_occupancy(&world.get_transformed_collider(id).unwrap(), id, false);
+            self.calculate_object_occupancy(world.get_transformed_collider(id).unwrap(), id, false);
         }
     }
-    fn calculate_object_occupancy(&mut self, collider: &ColliderShape, index: u32, object_static: bool) {
-        let min = ColliderShape::calculate_aabb(collider).min;
-        let max = ColliderShape::calculate_aabb(collider).max;
-        let min_idx = (min / self.cell_size).floor().as_ivec3();
-        let max_idx = (max / self.cell_size).floor().as_ivec3();
+    fn calculate_object_occupancy(&mut self, collider: Box<dyn ColliderShape>, index: u32, object_static: bool) {
+        let aabb = collider.get_aabb();
+        let min_idx = (aabb.min / self.cell_size).floor().as_ivec3();
+        let max_idx = (aabb.max / self.cell_size).floor().as_ivec3();
         for x in min_idx.x..=max_idx.x {
             for y in min_idx.y..=max_idx.y {
                 for z in min_idx.z..=max_idx.z {
@@ -77,7 +76,9 @@ impl SpatialGrid {
 
                     let key = if a < b { (a, b) } else { (b, a) };
                     if seen_pairs.insert(key) {
-                        if world.get_transformed_collider(a).unwrap().collides_with(&world.get_transformed_collider(b).unwrap()) {
+                        let col_a =  world.get_transformed_collider(a).unwrap();
+                        let col_b = world.get_transformed_collider(b).unwrap();
+                        if let Some(simplex) = col_a.collides_with(col_b) {
                             if let Some(mut a_rb) = world.rigid_bodies.remove(&a) {
                                 if let Some(b_rb) = world.rigid_bodies.get_mut(&b) {
                                     a_rb.collided(&CollisionType::OtherRigidBody(b_rb));

@@ -1,242 +1,252 @@
-use std::fmt::{format, Display};
+use std::ops::Mul;
 use glam::{Mat3, Quat, Vec3};
 use crate::rendering::transform::Transform;
 
-#[derive(Debug, Copy, Clone)]
-pub enum ColliderShape {
-    Sphere(Sphere),
-    AABB(AABB),
-    ColliderBox(ColliderBox),
-    Capsule(Capsule),
-}
+const GEOMETRIC_EPSILON: f32 = 0.000001;
+fn update_simplex(simplex: &mut Vec<Vec3>, dir: &mut Vec3) {
+    match simplex.len() {
+        2 => {
+            let a = simplex[1];
+            let b = simplex[0];
+            *dir = if (b - a).dot(-a) > 0.0 {
+                (b - a).cross((-a).cross(b - a))
+            } else {
+                -a
+            };
+        },
+        3 => {
+            let a = simplex[2];
+            let b = simplex[1];
+            let c = simplex[0];
+            let norm = (b - a).cross(c - a);
 
-#[derive(Debug, Copy, Clone)]
-pub struct Sphere {
-    pub center: Vec3,
-    pub radius: f32,
-}
-impl Sphere {
-    pub fn new(center: Vec3, radius: f32) -> Self {
-        Self { center, radius }
+            if norm.cross(c - a).dot(-a) > 0.0 { // CA or A region
+                if (c - a).dot(-a) > 0.0 { // CA region
+                    *simplex = vec![c, a];
+                    *dir = (c - a).cross(-a).cross(c - a);
+                } else { // A region
+                    *simplex = vec![a];
+                    *dir = -a;
+                }
+            } else { // BA, A, above, or below
+                if (b - a).cross(norm).dot(-a) > 0.0 { // BA or A region
+                    if (b - a).dot(-a) > 0.0 { // BA region
+                        *simplex = vec![b, a];
+                        *dir = (b - a).cross(-a).cross(b - a);
+                    } else { // A region
+                        *simplex = vec![a];
+                        *dir = -a;
+                    }
+                } else { // Above or below
+                    if norm.dot(-a) > 0.0 { // Above
+                        *simplex = vec![a, b, c];
+                        *dir = norm;
+                    } else { // Below
+                        *simplex = vec![a, b, c];
+                        *dir = -norm;
+                    }
+                }
+            }
+        },
+        4 => {
+            let a = simplex[3];
+            let b = simplex[2];
+            let c = simplex[1];
+            let d = simplex[0];
+
+            let ac = c - a;
+            let ab = b - a;
+            let ad = d - a;
+            let abc = ab.cross(ac).normalize();
+            let abd = ab.cross(ad).normalize();
+            let acd = ac.cross(ad).normalize();
+
+            let dist_abc = (-abc).dot(a).abs();
+            let dist_abd = (-abd).dot(a).abs();
+            let dist_acd = (-acd).dot(a).abs();
+
+            if dist_abc <= dist_abd && dist_abc <= dist_acd {
+                *simplex = vec![c, b, a];
+            } else if dist_abd <= dist_acd {
+                *simplex = vec![d, b, a];
+            } else {
+                *simplex = vec![d, c, a];
+            }
+            update_simplex(simplex, dir);
+        },
+        len => panic!("Invalid simplex length of {}", len)
     }
 }
-#[derive(Debug, Copy, Clone)]
+fn simplex_contains_origin(simplex: &Vec<Vec3>) -> bool{
+    match simplex.len() {
+        1 => {
+            let abs = simplex[0].abs();
+            abs.x < GEOMETRIC_EPSILON &&
+                abs.y < GEOMETRIC_EPSILON &&
+                abs.z < GEOMETRIC_EPSILON
+        },
+        2 => {
+            let a = simplex[1];
+            let b = simplex[0];
+            let abs = b.cross(a).abs();
+            abs.x < GEOMETRIC_EPSILON &&
+                abs.y < GEOMETRIC_EPSILON &&
+                abs.z < GEOMETRIC_EPSILON
+        },
+        3 => {
+            let a = simplex[2];
+            let b = simplex[1];
+            let c = simplex[0];
+
+            let v0 = b - a;
+            let v1 = c - a;
+            let v2 = -a;
+
+            let dot00 = v0.dot(v0);
+            let dot01 = v0.dot(v1);
+            let dot11 = v1.dot(v1);
+            let dot02 = v0.dot(v2);
+            let dot12 = v1.dot(v2);
+
+            let inv_denom = 1.0 / (dot00 * dot11 - dot01 * dot01);
+            let u = (dot11 * dot02 - dot01 * dot12) * inv_denom;
+            let v = (dot00 * dot12 - dot01 * dot02) * inv_denom;
+            
+            u >= -GEOMETRIC_EPSILON && v >= -GEOMETRIC_EPSILON && (u + v) <= 1.0 + GEOMETRIC_EPSILON
+        },
+        4 => {
+            let a = simplex[3];
+            let b = simplex[2];
+            let c = simplex[1];
+            let d = simplex[0];
+
+            let faces = [
+                (a, b, c, d),
+                (a, b, d, c),
+                (a, c, d, b),
+                (b, c, d, a),
+            ];
+
+            for (v0, v1, v2, opposite) in faces {
+                let n = (v1 - v0).cross(v2 - v0);
+
+                if n.length_squared() < GEOMETRIC_EPSILON * GEOMETRIC_EPSILON {
+                    return false;
+                }
+
+                let sign_origin = n.dot(-v0);
+                let sign_opposite = n.dot(opposite - v0);
+
+                if sign_origin * sign_opposite < -GEOMETRIC_EPSILON {
+                    return false;
+                }
+            }
+            true
+        },
+        len => panic!("Invalid simplex length of {}", len)
+    }
+}
+pub trait ColliderShape {
+    // Function to return point on shape the furthest along a direction
+    fn support(&self, dir: Vec3) -> Vec3;
+    fn get_aabb(&self) -> AABB;
+    fn transform(&self, transform: &Transform) -> Box<dyn ColliderShape>;
+    fn collides_with(&self, other: Box<dyn ColliderShape>) -> Option<Vec<Vec3>> {
+        let mut dir = Vec3::X;
+        let mut simplex = Vec::with_capacity(4);
+        simplex.push(self.support(dir) - other.support(-dir));
+        dir = -simplex[0];
+        loop {
+            let new = self.support(dir) - other.support(-dir);
+
+            if new.dot(dir) <= 0.0 {
+                return None;
+            }
+            simplex.push(new);
+            if simplex_contains_origin(&mut simplex) {
+                return Some(simplex);
+            }
+            update_simplex(&mut simplex, &mut dir);
+        }
+    }
+}
+#[derive(Clone, Copy, Debug)]
+pub struct Sphere {
+    pub radius: f32,
+    pub center: Vec3,
+}
+impl ColliderShape for Sphere {
+    fn support(&self, dir: Vec3) -> Vec3 {
+        self.center + dir.normalize() * self.radius
+    }
+    fn get_aabb(&self) -> AABB {
+        AABB {
+            min: Vec3::splat(-self.radius),
+            max: Vec3::splat(self.radius),
+        }
+    }
+    fn transform(&self, transform: &Transform) -> Box<dyn ColliderShape> {
+        // Ellipses are not currently supported, so scale is interpreted as its max value
+        Box::new(Self {
+            radius: transform.scale.max_element(),
+            center: self.center + transform.pos,
+        })
+    }
+}
+#[derive(Clone, Copy, Debug)]
 pub struct AABB {
     pub min: Vec3,
     pub max: Vec3,
 }
-impl AABB {
-    pub fn new(min: Vec3, max: Vec3) -> Self {
-        Self { min, max }
+impl ColliderShape for AABB {
+    fn support(&self, dir: Vec3) -> Vec3 {
+        Vec3::new(
+            if dir.x >= 0.0 { self.max.x } else { self.min.x },
+            if dir.y >= 0.0 { self.max.y } else { self.min.y },
+            if dir.z >= 0.0 { self.max.z } else { self.min.z },
+        )
+    }
+    fn get_aabb(&self) -> AABB {
+        *self
+    }
+    fn transform(&self, transform: &Transform) -> Box<dyn ColliderShape> {
+        todo!()
     }
 }
-#[derive(Debug, Copy, Clone)]
-pub struct ColliderBox {
+#[derive(Clone, Copy, Debug)]
+pub struct Box3 {
     pub center: Vec3,
-    pub size: Vec3,
-    pub rot: Quat,
+    pub rotation: Quat,
+    pub half_extents: Vec3,
 }
-impl ColliderBox {
-    pub fn new(center: Vec3, size: Vec3, rot: Quat) -> Self {
-        Self { center, size, rot }
-    }
-}
-#[derive(Debug, Copy, Clone)]
-pub struct Capsule {
-    pub center: Vec3,
-    pub radius: f32,
-    pub height: f32,
-    pub rot: Quat,
-}
-impl Capsule {
-    pub fn new(center: Vec3, radius: f32, height: f32, rot: Quat) -> Self {
-        Self { center, radius, height, rot }
-    }
-}
-
-impl ColliderShape {
-    pub fn collides_with(&self, other: &ColliderShape) -> bool {
-        match (self, other) {
-            (ColliderShape::Sphere(a), ColliderShape::Sphere(b)) => Self::sphere_collision(a, b),
-            (ColliderShape::AABB(a), ColliderShape::AABB(b)) => Self::aabb_collision(a, b),
-            (ColliderShape::ColliderBox(a), ColliderShape::ColliderBox(b)) => Self::box_collision(a, b),
-            (ColliderShape::Capsule(a), ColliderShape::Capsule(b)) => Self::capsule_collision(a, b),
-            (ColliderShape::Sphere(a), ColliderShape::ColliderBox(b)) |
-            (ColliderShape::ColliderBox(b), ColliderShape::Sphere(a)) => Self::sphere_box_collision(a, b),
-            (ColliderShape::Sphere(a), ColliderShape::AABB(b)) |
-            (ColliderShape::AABB(b), ColliderShape::Sphere(a)) => Self::sphere_aabb_collision(a, b),
-            (ColliderShape::Sphere(a), ColliderShape::Capsule(b)) |
-            (ColliderShape::Capsule(b), ColliderShape::Sphere(a)) => Self::sphere_capsule_collision(a, b),
-            (ColliderShape::AABB(a), ColliderShape::ColliderBox(b)) |
-            (ColliderShape::ColliderBox(b), ColliderShape::AABB(a)) => Self::aabb_box_collision(a, b),
-            (ColliderShape::AABB(a), ColliderShape::Capsule(b)) |
-            (ColliderShape::Capsule(b), ColliderShape::AABB(a)) => Self::aabb_capsule_collision(a, b),
-            (ColliderShape::ColliderBox(a), ColliderShape::Capsule(b)) |
-            (ColliderShape::Capsule(b), ColliderShape::ColliderBox(a)) => Self::box_capsule_collision(a, b),
-        }
-    }
-    fn sphere_collision(a: &Sphere, b: &Sphere) -> bool {
-        a.radius + b.radius >= a.center.distance(b.center)
-    }
-    fn aabb_collision(a: &AABB, b: &AABB) -> bool {
-        (a.min.x <= b.max.x && a.max.x >= b.min.x) &&
-            (a.min.y <= b.max.y && a.max.y >= b.min.y) &&
-            (a.min.z <= b.max.z && a.max.z >= b.min.z)
-    }
-    fn box_collision(a: &ColliderBox, b: &ColliderBox) -> bool {
-        let a_half = a.size * 0.5;
-        let b_half = b.size * 0.5;
-
-        let a_rot = Mat3::from_quat(a.rot);
-        let b_rot = Mat3::from_quat(b.rot);
-
-        let r = a_rot.transpose() * b_rot;
-
-        let t_world = b.center - a.center;
-        let t = a_rot.transpose() * t_world;
-
-        let abs_r = Mat3::from_cols(
-            r.x_axis.abs() + Vec3::splat(1e-6),
-            r.y_axis.abs() + Vec3::splat(1e-6),
-            r.z_axis.abs() + Vec3::splat(1e-6),
+impl ColliderShape for Box3 {
+    fn support(&self, dir: Vec3) -> Vec3 {
+        let dir_local = self.rotation.conjugate() * dir;
+        let extreme_local = Vec3::new(
+            if dir_local.x >= 0.0 { self.half_extents.x } else { -self.half_extents.x },
+            if dir_local.y >= 0.0 { self.half_extents.y } else { -self.half_extents.y },
+            if dir_local.z >= 0.0 { self.half_extents.z } else { -self.half_extents.z },
         );
-
-        let r_at = |row: usize, col: usize| match col {
-            0 => r.x_axis[row],
-            1 => r.y_axis[row],
-            _ => r.z_axis[row],
-        };
-        let abs_r_at = |row: usize, col: usize| match col {
-            0 => abs_r.x_axis[row],
-            1 => abs_r.y_axis[row],
-            _ => abs_r.z_axis[row],
-        };
-
-        for i in 0..3 {
-            let ra = a_half[i];
-            let rb = b_half.x * abs_r_at(i, 0)
-                + b_half.y * abs_r_at(i, 1)
-                + b_half.z * abs_r_at(i, 2);
-            if t[i].abs() > ra + rb {
-                return false;
-            }
-        }
-
-        for i in 0..3 {
-            let ra = a_half.x * abs_r_at(0, i)
-                + a_half.y * abs_r_at(1, i)
-                + a_half.z * abs_r_at(2, i);
-            let rb = b_half[i];
-            let t_proj = t.x * r_at(0, i) + t.y * r_at(1, i) + t.z * r_at(2, i);
-            if t_proj.abs() > ra + rb {
-                return false;
-            }
-        }
-
-        for i in 0..3 {
-            for j in 0..3 {
-                let t_proj = t[(i + 1) % 3] * r_at((i + 2) % 3, j)
-                    - t[(i + 2) % 3] * r_at((i + 1) % 3, j);
-
-                let ra = a_half[(i + 1) % 3] * abs_r_at((i + 2) % 3, j)
-                    + a_half[(i + 2) % 3] * abs_r_at((i + 1) % 3, j);
-
-                let rb = b_half[(j + 1) % 3] * abs_r_at(i, (j + 2) % 3)
-                    + b_half[(j + 2) % 3] * abs_r_at(i, (j + 1) % 3);
-
-                if t_proj.abs() > ra + rb {
-                    return false;
-                }
-            }
-        }
-
-        true
+        self.rotation * extreme_local + self.center
     }
-
-
-    fn capsule_collision(a: &Capsule, b: &Capsule) -> bool {
-        todo!()
-    }
-    fn sphere_box_collision(a: &Sphere, b: &ColliderBox) -> bool {
-        todo!()
-    }
-
-    fn sphere_aabb_collision(a: &Sphere, b: &AABB) -> bool {
-        todo!()
-    }
-
-    fn sphere_capsule_collision(a: &Sphere, b: &Capsule) -> bool {
-        todo!()
-    }
-
-    fn aabb_box_collision(a: &AABB, b: &ColliderBox) -> bool {
-        todo!()
-    }
-
-    fn aabb_capsule_collision(a: &AABB, b: &Capsule) -> bool {
-        todo!()
-    }
-
-    fn box_capsule_collision(a: &ColliderBox, b: &Capsule) -> bool {
-        todo!()
-    }
-
-    pub fn calculate_aabb(&self) -> AABB {
-        match self {
-            ColliderShape::Sphere(s) => {
-                let v1 = s.center + Vec3::splat(s.radius);
-                let v2 = s.center - Vec3::splat(s.radius);
-                AABB::new(v1, v2)
-            }
-            ColliderShape::AABB(aabb) => { aabb.clone() }
-            ColliderShape::ColliderBox(b) => {
-                let half = b.size * 0.5;
-                let rot = Mat3::from_quat(b.rot);
-
-                let abs_rot = Mat3::from_cols(
-                    rot.x_axis.abs(),
-                    rot.y_axis.abs(),
-                    rot.z_axis.abs(),
-                );
-
-                let extents = abs_rot * half;
-
-                AABB::new(b.center - extents, b.center + extents)
-            }
-            ColliderShape::Capsule(_) => {
-                todo!();
-            }
+    fn get_aabb(&self) -> AABB {
+        let rot = Mat3::from_quat(self.rotation);
+        let abs_rot = Mat3::from_cols(
+            rot.x_axis.abs(),
+            rot.y_axis.abs(),
+            rot.z_axis.abs(),
+        );
+        let extents = abs_rot * self.half_extents;
+        AABB {
+            min: self.center - extents,
+            max: self.center + extents,
         }
     }
-    pub fn transform_collider(shape: &ColliderShape, transform: &Transform) -> Option<ColliderShape> {
-        match shape {
-            ColliderShape::Sphere(s) => {
-                let mut s = s.clone();
-                s.center += transform.pos;
-                s.radius *= transform.scale.x; // TODO: Support ellipses
-                return Some(ColliderShape::Sphere(s));
-            }
-            ColliderShape::AABB(aabb) => {
-                // let mut aabb = aabb.clone();
-                // aabb.min += transform.pos;
-                // aabb.max += transform.pos;
-                // aabb.min
-                // return Some(ColliderShape::AABB(aabb));
-                todo!()
-            }
-            ColliderShape::ColliderBox(b) => {
-                let mut b = b.clone();
-                b.center += transform.pos;
-                b.rot *= transform.rot;
-                b.size.x *= transform.scale.x;
-                b.size.y *= transform.scale.y;
-                b.size.z *= transform.scale.z;
-
-                return Some(ColliderShape::ColliderBox(b));
-            }
-            ColliderShape::Capsule(c) => {
-                todo!()
-            }
-        }
+    fn transform(&self, transform: &Transform) -> Box<dyn ColliderShape> {
+        Box::new(Self {
+            center: self.center + transform.pos,
+            rotation: transform.rot * self.rotation,
+            half_extents: self.half_extents * transform.scale,
+        })
     }
 }

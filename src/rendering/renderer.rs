@@ -331,7 +331,7 @@ impl Renderer<'_> {
         self.depth_texture = depth_texture;
         self.depth_texture_view = depth_texture_view;
     }
-    pub fn redraw(&self, world: &World, time: Time) {
+    pub fn redraw(&self, world: &World, total_time: f32) {
         let tex = self.surface.get_current_texture().unwrap();
         let view = tex.texture.create_view(&Default::default());
         let mut encoder = self.device.create_command_encoder(&Default::default());
@@ -363,7 +363,7 @@ impl Renderer<'_> {
         render_pass.set_bind_group(0, &self.texture_bind_group, &[]);
         self.queue.write_buffer(
             &self.time_buffer, 0,
-            bytemuck::cast_slice(&[time]),
+            bytemuck::cast_slice(&[total_time]),
         );
         self.queue.write_buffer(
             &self.view_buffer, 0,

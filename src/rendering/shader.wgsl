@@ -2,11 +2,6 @@ struct Matrix {
     model: mat4x4<f32>
 }
 
-struct Time {
-    delta: f32,
-    total: f32,
-}
-
 // G0: Texture Bindings
 //   B0: Obama texture
 //   B1: Obama view
@@ -23,7 +18,7 @@ var obama: texture_2d<f32>;
 var obama_sampler: sampler;
 
 @group(1) @binding(0)
-var<uniform> time: Time;
+var<uniform> time: f32;
 @group(1) @binding(1)
 var<uniform> view_matrix: Matrix;
 @group(1) @binding(2)
