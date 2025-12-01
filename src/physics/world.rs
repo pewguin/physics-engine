@@ -33,8 +33,8 @@ impl World {
     }
     pub fn get_transformed_collider(&self, id: u32) -> Option<Box<dyn ColliderShape>> {
         if let Some(col) = self.colliders.get(&id) {
-            if let Some(trans) = self.transforms.get(&id) {
-                return Some(col.transform(trans));
+            if let Some(transform) = self.transforms.get(&id) {
+                return Some(col.transform(transform));
             }
         }
         None

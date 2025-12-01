@@ -1,3 +1,4 @@
+use glam::Vec3;
 use crate::rendering::vertex::Vertex;
 
 const CUBE_VERTEXES: [Vertex; 24] = [
@@ -47,7 +48,7 @@ pub struct Mesh {
 
 impl Mesh {
     pub fn cube() -> Self {
-        Mesh {
+        Self {
             vertexes: CUBE_VERTEXES.to_vec().iter().map(|v| *v * 0.5).collect(),
             indices: CUBE_INDICES.to_vec(),
         }

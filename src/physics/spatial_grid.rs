@@ -1,6 +1,6 @@
 use std::collections::{HashMap, HashSet};
 use glam::{EulerRot, Quat, Vec3};
-use crate::physics::collider::ColliderShape;
+use crate::physics::collider::{collides_with, ColliderShape};
 use crate::physics::mesh::Mesh;
 use crate::physics::rigid_body::{CollisionType, RigidBody};
 use crate::physics::world::World;
@@ -78,7 +78,7 @@ impl SpatialGrid {
                     if seen_pairs.insert(key) {
                         let col_a =  world.get_transformed_collider(a).unwrap();
                         let col_b = world.get_transformed_collider(b).unwrap();
-                        if let Some(simplex) = col_a.collides_with(col_b) {
+                        if let Some(simplex) = collides_with(col_a, col_b) {
                             if let Some(mut a_rb) = world.rigid_bodies.remove(&a) {
                                 if let Some(b_rb) = world.rigid_bodies.get_mut(&b) {
                                     a_rb.collided(&CollisionType::OtherRigidBody(b_rb));

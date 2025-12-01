@@ -13,7 +13,7 @@ use winit::event::WindowEvent;
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowAttributes, WindowId};
 use crate::physics;
-use crate::physics::collider::Box3;
+use crate::physics::collider::{Box3, Sphere};
 use crate::physics::rigid_body::RigidBody;
 use crate::physics::spatial_grid::SpatialGrid;
 
@@ -55,7 +55,7 @@ impl ApplicationHandler for App<'_> {
 
         let floor = Mesh::cube();
         let mut floor_transform = Transform::default();
-        floor_transform.pos += Vec3::NEG_Y * 3.0;
+        floor_transform.pos = Vec3::NEG_Y * 3.0;
         floor_transform.pos += Vec3::NEG_Z * 4.0;
         floor_transform.scale = Vec3::new(1.0, 0.1, 1.0) * 10.0;
         renderer.create_buffered_mesh(0, &floor);
@@ -64,12 +64,25 @@ impl ApplicationHandler for App<'_> {
 
         let cube = Mesh::cube();
         let mut cube_transform = Transform::default();
-        cube_transform.pos += Vec3::NEG_Z * 5.0;
+        cube_transform.pos = Vec3::NEG_Z * 5.0;
         cube_transform.rot *= Quat::from_euler(EulerRot::XYZ, PI / 4.0, 0.0, PI / 4.0);
         renderer.create_buffered_mesh(1, &cube);
-        let rb = RigidBody::new(Vec3::ZERO, true, 0.8);
-        self.world.add_object(1, box_collider, cube_transform, cube, rb);
+        let cube_rb = RigidBody::new(Vec3::ZERO, true, 0.98);
+        self.world.add_object(1, box_collider, cube_transform, cube, cube_rb);
         self.collision_grid.add_object(1, false);
+
+        let sphere_collider = Sphere {
+            center: Vec3::ZERO,
+            radius: 0.5,
+        };
+
+        let sphere_rb = RigidBody::new(Vec3::ZERO, true, 0.98);
+        let sphere = Mesh::cube();
+        let mut sphere_transform = Transform::default();
+        sphere_transform.pos = Vec3::new(0.0, 3.0, -5.0);
+        renderer.create_buffered_mesh(2, &sphere);
+        self.world.add_object(2, sphere_collider, sphere_transform, sphere, sphere_rb);
+        self.collision_grid.add_object(2, false);
 
         self.collision_grid.calculate_all_static_object_occupancies(&self.world);
 
