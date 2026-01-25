@@ -4,17 +4,19 @@ use crate::rendering::renderer::Renderer;
 use crate::rendering::time::Time;
 use crate::rendering::transform::Transform;
 use glam::{EulerRot, Quat, Vec3};
+use winit::keyboard::{KeyCode, PhysicalKey};
 use std::f32::consts::PI;
 use std::sync::{Arc, RwLock};
-use std::time::Instant;
+use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowAttributes, WindowId};
-use crate::physics;
 use crate::physics::collider::{ColliderBox, ColliderShape};
 use crate::physics::rigid_body::RigidBody;
 use crate::physics::spatial_grid::SpatialGrid;
+
+const FRAME_TIME: Duration = Duration::from_nanos(16_666_667);
 
 pub struct AppState {}
 pub struct App<'a> {
@@ -26,7 +28,9 @@ pub struct App<'a> {
     time: Time,
     last_time: Instant,
     start_time: Instant,
+    accumulator: Duration,
 }
+
 impl App<'_> {
     pub fn new() -> Self {
         Self {
@@ -41,9 +45,11 @@ impl App<'_> {
             },
             last_time: Instant::now(),
             start_time: Instant::now(),
+            accumulator: Duration::ZERO,
         }
     }
 }
+
 impl ApplicationHandler for App<'_> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window_attributes = WindowAttributes::default();
@@ -94,24 +100,32 @@ impl ApplicationHandler for App<'_> {
                     renderer.resize(size.width, size.height);
                 }
             }
-            WindowEvent::RedrawRequested => {
-                if let Some(renderer) = &self.renderer {
-                    renderer.redraw(&self.world, self.time);
+            WindowEvent::KeyboardInput { event, .. } => {
+                match (event.physical_key, event.state) {
+                    (PhysicalKey::Code(KeyCode::Space), ElementState::Pressed) => {
+                        // self.step_frame = true;
+                    }
+                    _ => {}
                 }
             }
+                
             _ => {}
         }
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        self.time = Time {
-            total: self.start_time.elapsed().as_secs_f32(),
-            delta: self.last_time.elapsed().as_secs_f32(),
-        };
         if let Some(renderer) = &self.renderer {
-            self.collision_grid.recalculate_grid_and_collisions(&mut self.world);
-            self.world.do_physics_step(self.time.delta);
-            renderer.redraw(&self.world, self.time);
+            self.time = Time {
+                total: self.start_time.elapsed().as_secs_f32(),
+                delta: FRAME_TIME.as_secs_f32(),
+            };
+            self.accumulator += self.last_time.elapsed();
+            while self.accumulator >= FRAME_TIME {
+                self.accumulator -= FRAME_TIME;
+                self.collision_grid.recalculate_grid_and_collisions(&mut self.world);
+                self.world.do_physics_step(self.time.delta);
+                renderer.redraw(&self.world, self.time);
+            }
         }
         self.last_time = Instant::now();
     }
