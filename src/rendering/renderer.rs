@@ -327,6 +327,9 @@ impl Renderer<'_> {
             0.0001,
             3000.0,
         );
+
+        self.queue.write_buffer(&self.projection_buffer, 0, &bytemuck::cast_slice(&self.projection_matrix.to_cols_array()));
+
         let (depth_texture, depth_texture_view) = Self::create_depth_texture(&self.device, width, height);
         self.depth_texture = depth_texture;
         self.depth_texture_view = depth_texture_view;

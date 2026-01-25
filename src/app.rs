@@ -4,12 +4,13 @@ use crate::rendering::renderer::Renderer;
 use crate::rendering::time::Time;
 use crate::rendering::transform::Transform;
 use glam::{EulerRot, Quat, Vec3};
+use winit::keyboard::{KeyCode, PhysicalKey};
 use std::f32::consts::PI;
 use std::sync::{Arc, RwLock};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
 use winit::application::ApplicationHandler;
-use winit::event::WindowEvent;
+use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowAttributes, WindowId};
 use crate::physics;
@@ -17,16 +18,20 @@ use crate::physics::collider::{Box3, Sphere};
 use crate::physics::rigid_body::RigidBody;
 use crate::physics::spatial_grid::SpatialGrid;
 
-
 const PHYSICS_SUBSTEPS_COUNT: u8 = 3;
-const FRAME_TIME: f32 = 1.0 / 60.0;
+const FRAME_TIME: Duration = Duration::from_nanos(16_666_667);
+
+pub struct AppState {}
 pub struct App<'a> {
     pub renderer: Option<Renderer<'a>>,
     pub window: Option<Arc<Window>>,
     pub world: World,
     collision_grid: SpatialGrid,
     total_time: f32,
+    last_check_end: Instant,
+    time_accumulator: Duration,
 }
+
 impl App<'_> {
     pub fn new() -> Self {
         Self {
@@ -35,9 +40,12 @@ impl App<'_> {
             world: World::new(),
             collision_grid: SpatialGrid::new(2.0),
             total_time: 0.0,
+            last_check_end: Instant::now(),
+            time_accumulator: Duration::ZERO,
         }
     }
 }
+
 impl ApplicationHandler for App<'_> {
     fn resumed(&mut self, event_loop: &ActiveEventLoop) {
         let window_attributes = WindowAttributes::default();
@@ -104,34 +112,39 @@ impl ApplicationHandler for App<'_> {
                     renderer.resize(size.width, size.height);
                 }
             }
-            WindowEvent::RedrawRequested => {
-                if let Some(renderer) = &self.renderer {
-                    renderer.redraw(&self.world, self.total_time);
+            WindowEvent::KeyboardInput { event, .. } => {
+                match (event.physical_key, event.state) {
+                    (PhysicalKey::Code(KeyCode::Space), ElementState::Pressed) => {
+                        // self.step_frame = true;
+                    }
+                    _ => {}
                 }
             }
+                
             _ => {}
         }
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        let time = Time {
-            total: self.total_time,
-            delta: FRAME_TIME,
-        };
         let frame_start = Instant::now();
         if let Some(renderer) = &self.renderer {
-            for i in 0..PHYSICS_SUBSTEPS_COUNT {
-                self.collision_grid.recalculate_grid_and_collisions(&mut self.world);
-                self.world.do_physics_step(FRAME_TIME / PHYSICS_SUBSTEPS_COUNT as f32);
+            self.time_accumulator += self.last_check_end.elapsed();
+            while self.time_accumulator >= FRAME_TIME {
+                self.time_accumulator -= FRAME_TIME;
+                let time = Time {
+                    total: self.total_time,
+                    delta: FRAME_TIME.as_secs_f32(),
+                };
+                for _ in 0..PHYSICS_SUBSTEPS_COUNT {
+                    self.collision_grid.recalculate_grid_and_collisions(&mut self.world);
+                    self.world.do_physics_step(time.delta / PHYSICS_SUBSTEPS_COUNT as f32);
+                }
+                renderer.redraw(&self.world, time.delta);
             }
-            renderer.redraw(&self.world, FRAME_TIME);
         }
-        let leftover_time = FRAME_TIME - frame_start.elapsed().as_secs_f32();
-        if leftover_time >= 0.0 {
-            sleep(Duration::from_secs_f32(leftover_time));
-        } else {
-            // Overruns > 10ms are bad
-            println!("Loop overrun of {}ms", -leftover_time * 1000.0);
+        if frame_start.elapsed() > FRAME_TIME {
+            println!("Loop overrun of {}ms", (frame_start.elapsed() - FRAME_TIME).as_millis());
         }
+        self.last_check_end = Instant::now();
     }
 }

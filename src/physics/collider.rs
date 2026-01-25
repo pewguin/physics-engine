@@ -285,8 +285,9 @@ impl Polytope {
     }
 }
 fn project(a: Vec3, b: Vec3) -> Vec3 {
-
+    todo!("proj fn")
 }
+// Uses expanding polytope algorithm
 fn find_mvt(a: Box<dyn ColliderShape>, b: Box<dyn ColliderShape>, mut polytope: Polytope) -> Vec3 {
     loop {
         let proj = polytope.project_origin_to_closest_face();
@@ -308,6 +309,7 @@ pub trait ColliderShape {
     fn get_aabb(&self) -> AABB;
     fn transform(&self, transform: &Transform) -> Box<dyn ColliderShape>;
 }
+// Uses GJK algorithm
 pub fn collides_with(a: Box<dyn ColliderShape>, b: Box<dyn ColliderShape>) -> Option<Vec3> {
     let mut dir = Vec3::X;
     let mut simplex = Vec::with_capacity(4);
@@ -322,7 +324,8 @@ pub fn collides_with(a: Box<dyn ColliderShape>, b: Box<dyn ColliderShape>) -> Op
         simplex.push(new);
         if simplex_contains_origin(&mut simplex) {
             let polytope = Polytope::from_simplex(simplex, a.as_ref(), b.as_ref());
-            return Some(find_mvt(a, b, polytope));
+            // return Some(find_mvt(a, b, polytope));
+            return Some(Vec3::ZERO);
         }
         update_simplex(&mut simplex, &mut dir);
     }
