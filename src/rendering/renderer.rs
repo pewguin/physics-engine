@@ -22,7 +22,6 @@ pub struct Renderer<'a> {
     pipeline: RenderPipeline,
     mesh_bind_group_layout: BindGroupLayout,
     projection_matrix: Mat4,
-    time_buffer: Buffer,
     projection_buffer: Buffer,
     view_buffer: Buffer,
     frame_bind_group: BindGroup,
@@ -111,20 +110,9 @@ impl Renderer<'_> {
         let frame_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Label::from("Global bindings"),
             entries: &[
-                // Time binding
-                BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: ShaderStages::FRAGMENT | ShaderStages::VERTEX,
-                    ty: BindingType::Buffer {
-                        ty: BufferBindingType::Uniform,
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
                 // View
                 BindGroupLayoutEntry {
-                    binding: 1,
+                    binding: 0,
                     visibility: ShaderStages::VERTEX,
                     ty: BindingType::Buffer {
                         ty: BufferBindingType::Uniform,
@@ -135,7 +123,7 @@ impl Renderer<'_> {
                 },
                 // Project
                 BindGroupLayoutEntry {
-                    binding: 2,
+                    binding: 1,
                     visibility: ShaderStages::VERTEX,
                     ty: BindingType::Buffer {
                         ty: BufferBindingType::Uniform,
@@ -147,7 +135,7 @@ impl Renderer<'_> {
             ],
         });
 
-        // Layout for texture data passed to shader. Updated rarely.
+        // Layout for texture data passed to shader. Updated rarely (when textures updated).
         let texture_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Some("texture bind group layout"),
             entries: &[
@@ -179,7 +167,8 @@ impl Renderer<'_> {
             bind_group_layouts: &[&texture_bind_group_layout, &frame_bind_group_layout, &mesh_bind_group_layout,],
             push_constant_ranges: &[],
         });
-
+        
+        // Render pipeline for main screen, uses depth texture
         let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
             label: Some("Main pipeline"),
             layout: Some(&pipeline_layout),
@@ -215,17 +204,13 @@ impl Renderer<'_> {
             cache: None,
         });
 
+        // Projection matrix for all vertecies in the scene
         let projection_matrix = Mat4::perspective_rh_gl(
             90.0_f32.to_radians(),
-            1.0,
+            1.0, // Incorrect, but not known at this time
             0.0001,
             3000.0,
         );
-
-        let time = Time {
-            total: 0.0,
-            delta: 0.0,
-        };
 
         let camera_transform = Transform {
             scale: Vec3::ONE,
@@ -233,11 +218,6 @@ impl Renderer<'_> {
             pos: Vec3::ZERO,
         };
 
-        let time_buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Label::from("Time buffer"),
-            contents: &bytemuck::cast_slice(&[time]),
-            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-        });
         let projection_buffer = device.create_buffer_init(&BufferInitDescriptor {
             label: Label::from("Projection buffer"),
             contents: &bytemuck::cast_slice(&projection_matrix.to_cols_array()),
@@ -256,14 +236,10 @@ impl Renderer<'_> {
             entries: &[
                 BindGroupEntry {
                     binding: 0,
-                    resource: time_buffer.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
                     resource: projection_buffer.as_entire_binding(),
                 },
                 BindGroupEntry {
-                    binding: 2,
+                    binding: 1,
                     resource: view_buffer.as_entire_binding(),
                 }
             ],
@@ -296,7 +272,6 @@ impl Renderer<'_> {
             pipeline,
             mesh_bind_group_layout,
             projection_matrix,
-            time_buffer,
             frame_bind_group,
             depth_texture,
             depth_texture_view,
@@ -307,6 +282,8 @@ impl Renderer<'_> {
             buffered_meshes,
         }
     }
+
+    // Resize all render targets and proj. matrix
     pub fn resize(&mut self, width: u32, height: u32) {
         self.surface.configure(
             &self.device,
@@ -334,11 +311,14 @@ impl Renderer<'_> {
         self.depth_texture = depth_texture;
         self.depth_texture_view = depth_texture_view;
     }
-    pub fn redraw(&self, world: &World, total_time: f32) {
+
+    // Render stuff, using pipeline
+    pub fn redraw(&self, world: &World) {
         let tex = self.surface.get_current_texture().unwrap();
         let view = tex.texture.create_view(&Default::default());
         let mut encoder = self.device.create_command_encoder(&Default::default());
 
+        // Clear targets
         let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
             label: Some("pass 1"),
             color_attachments: &[Some(RenderPassColorAttachment {
@@ -365,15 +345,12 @@ impl Renderer<'_> {
         render_pass.set_pipeline(&self.pipeline);
         render_pass.set_bind_group(0, &self.texture_bind_group, &[]);
         self.queue.write_buffer(
-            &self.time_buffer, 0,
-            bytemuck::cast_slice(&[total_time]),
-        );
-        self.queue.write_buffer(
             &self.view_buffer, 0,
             bytemuck::cast_slice(&self.camera_transform.as_matrix().to_cols_array()),
         );
         render_pass.set_bind_group(1, &self.frame_bind_group, &[]);
-
+        
+        // Render each mesh
         for id in world.meshes.keys().copied().into_iter() {
             let mesh = world.meshes.get(&id).unwrap();
             let transform = world.transforms.get(&id).unwrap();
@@ -391,7 +368,8 @@ impl Renderer<'_> {
         self.queue.submit(Some(encoder.finish()));
         tex.present();
     }
-
+    
+    // Mesh to exist in GPU memory
     pub fn create_buffered_mesh(&mut self, id: u32, mesh: &Mesh) {
         let transform_buffer = self.device.create_buffer_init(&BufferInitDescriptor {
             label: Label::from("transform buffer"),
@@ -423,6 +401,8 @@ impl Renderer<'_> {
         };
         self.buffered_meshes.insert(id, bf_mesh);
     }
+
+    // Load texture from disc to GPU memory
     pub fn load_texture(device: &Device, queue: &Queue, path: &str) -> (Texture, TextureView, Sampler) {
         let img = image::open(path).unwrap();
         let rgba = img.to_rgba8();
@@ -471,7 +451,7 @@ impl Renderer<'_> {
 
         (texture, view, sampler)
     }
-
+    
     pub fn create_depth_texture(device: &Device, width: u32, height: u32) -> (Texture, TextureView) {
         let depth_texture = device.create_texture(&TextureDescriptor {
             label: Some("depth texture"),
