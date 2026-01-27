@@ -413,7 +413,7 @@ impl Renderer<'_> {
             depth_or_array_layers: 1,
         };
         let texture = device.create_texture(&TextureDescriptor {
-            label: Some("Obama"),
+            label: Some(path),
             size,
             mip_level_count: 1,
             sample_count: 1,
@@ -439,7 +439,7 @@ impl Renderer<'_> {
         );
         let view = texture.create_view(&TextureViewDescriptor::default());
         let sampler = device.create_sampler(&SamplerDescriptor {
-            label: Some("Obama Sampler"),
+            label: Some(&format!("{} Sampler", path)),
             address_mode_u: AddressMode::ClampToEdge,
             address_mode_v: AddressMode::ClampToEdge,
             address_mode_w: AddressMode::ClampToEdge,

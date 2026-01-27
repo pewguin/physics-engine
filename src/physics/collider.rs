@@ -6,6 +6,7 @@ use glam::{Mat3, Quat, Vec3};
 use crate::rendering::transform::Transform;
 
 const GEOMETRIC_EPSILON: f32 = 0.000001;
+const MAX_EPA_ITERATIONS: u8 = 64;
 fn support(a: &dyn ColliderShape, b: &dyn ColliderShape, dir: Vec3) -> Vec3 {
     a.support(dir) - b.support(-dir)
 }
@@ -175,13 +176,6 @@ fn expand_simplex(mut simplex: Vec<Vec3>, b1: &dyn ColliderShape, b2: &dyn Colli
         _ => panic!("expected simplex of size 3 or 4")
     }
 }
-fn distance_to_origin(a: Vec3, b: Vec3, c: Vec3) -> f32 {
-    let mut norm = (b - a).cross(c - a).normalize();
-    if norm.dot(a) < 0.0 {
-        norm = -norm;
-    }
-    norm.dot(a)
-}
 struct Polytope {
     vertexes: Vec<Vec3>,
     indexes: Vec<usize>,
@@ -198,28 +192,24 @@ impl Polytope {
             ],
         }
     }
-    fn closest_face_to_origin(&self) -> (Vec3, Vec3, Vec3) {
-        let mut closest_face: Option<(Vec3, Vec3, Vec3)> = None;
-        let mut closest_distance = f32::MAX;
+    fn closest_face_to_origin(&self) -> (Vec3, f32) {
+        let mut closest_norm: Vec3 = Vec3::ZERO;
+        let mut closest_dist = f32::MAX;
+
         for face in self.indexes.chunks(3) {
             let a = self.vertexes[face[0]];
             let b = self.vertexes[face[1]];
             let c = self.vertexes[face[2]];
+            
+            let norm = (b - a).cross(c - a).normalize();
+            let dist = norm.dot(a);
 
-            let dist = distance_to_origin(a, b, c);
-
-            if dist < closest_distance {
-                closest_distance = dist;
-                closest_face = Some((a, b, c))
+            if dist < closest_dist - GEOMETRIC_EPSILON {
+                closest_dist = dist;
+                closest_norm = norm;
             }
         }
-        closest_face.unwrap()
-    }
-    pub fn project_origin_to_closest_face(&self) -> Vec3 {
-        let (a, b, c) = self.closest_face_to_origin();
-        let norm = (b - a).cross(c - a).normalize();
-        let dist = distance_to_origin(a, b, c);
-        norm * (-dist)
+        (closest_norm, closest_dist)
     }
     pub fn add_vertex(&mut self, vert: Vec3) {
         let mut horizon_edges: HashSet<(usize, usize)> = HashSet::new();
@@ -275,7 +265,7 @@ impl Polytope {
         let b = self.vertexes[b_i];
         let c = self.vertexes[c_i];
 
-        let mut n = (b - a).cross(c - a).normalize();
+        let n = (b - a).cross(c - a).normalize();
 
         if n.dot(a) < 0.0 {
             self.indexes.extend_from_slice(&[a_i, c_i, b_i]);
@@ -284,24 +274,24 @@ impl Polytope {
         }
     }
 }
-fn project(a: Vec3, b: Vec3) -> Vec3 {
-    todo!("proj fn")
-}
 // Uses expanding polytope algorithm
 fn find_mvt(a: Box<dyn ColliderShape>, b: Box<dyn ColliderShape>, mut polytope: Polytope) -> Vec3 {
-    loop {
-        let proj = polytope.project_origin_to_closest_face();
-        println!("proj: {:?}", proj);
-        let support = support(a.as_ref(), b.as_ref(), proj);
-        let abs = (project(support, proj) - proj).abs();
-        if abs.x < GEOMETRIC_EPSILON &&
-            abs.y < GEOMETRIC_EPSILON &&
-            abs.z < GEOMETRIC_EPSILON {
-            return proj;
+    let mut best = Vec3::ZERO;
+    for _ in 0..MAX_EPA_ITERATIONS {
+        let (norm, dist) = polytope.closest_face_to_origin();
+        best = norm * dist;
+        println!("norm: {:?}, dist: {:?}", norm, dist);
+        let support = support(a.as_ref(), b.as_ref(), norm);
+
+        let d = support.dot(norm);
+        if d - dist < GEOMETRIC_EPSILON {
+            return norm * dist;
         } else {
-            polytope.add_vertex(proj);
+            polytope.add_vertex(support);
         }
     }
+    println!("EPA didn't converge!");
+    best
 }
 pub trait ColliderShape {
     // Function to return point on shape the furthest along a direction
@@ -324,8 +314,7 @@ pub fn collides_with(a: Box<dyn ColliderShape>, b: Box<dyn ColliderShape>) -> Op
         simplex.push(new);
         if simplex_contains_origin(&mut simplex) {
             let polytope = Polytope::from_simplex(simplex, a.as_ref(), b.as_ref());
-            // return Some(find_mvt(a, b, polytope));
-            return Some(Vec3::ZERO);
+            return Some(find_mvt(a, b, polytope));
         }
         update_simplex(&mut simplex, &mut dir);
     }
