@@ -20,6 +20,7 @@ pub struct Renderer<'a> {
     device: Device,
     queue: Queue,
     pipeline: RenderPipeline,
+    wireframe_pipeline: RenderPipeline,
     mesh_bind_group_layout: BindGroupLayout,
     projection_matrix: Mat4,
     projection_buffer: Buffer,
@@ -86,6 +87,11 @@ impl Renderer<'_> {
         let shader_module = device.create_shader_module(ShaderModuleDescriptor {
             label: Some("main"),
             source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("shader.wgsl"))),
+        });
+
+        let wireframe_shader = device.create_shader_module(ShaderModuleDescriptor { 
+            label: Some("wireframe"),
+            source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("wireframe.wgsl"))),
         });
 
         // Layout for data passed to shader for each mesh. Updated per mesh.
@@ -167,6 +173,12 @@ impl Renderer<'_> {
             bind_group_layouts: &[&texture_bind_group_layout, &frame_bind_group_layout, &mesh_bind_group_layout,],
             push_constant_ranges: &[],
         });
+
+        let wireframe_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
+            label: Label::from("Wireframe pipeline"),
+            bind_group_layouts: &[&frame_bind_group_layout, &mesh_bind_group_layout,],
+            push_constant_ranges: &[],
+        });
         
         // Render pipeline for main screen, uses depth texture
         let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
@@ -203,6 +215,42 @@ impl Renderer<'_> {
             multiview: None,
             cache: None,
         });
+
+        let wireframe_pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
+            label: Some("Wireframe pipeline"),
+            layout: Some(&wireframe_layout),
+            vertex: VertexState {
+                module: &wireframe_shader,
+                entry_point: None,
+                compilation_options: Default::default(),
+                buffers: &[Vertex::LAYOUT],
+            },
+            primitive: PrimitiveState {
+                cull_mode: None,
+                ..Default::default()
+            },
+            depth_stencil: Some(DepthStencilState {
+                format: TextureFormat::Depth32Float,
+                depth_write_enabled: true,
+                depth_compare: CompareFunction::LessEqual,
+                stencil: Default::default(),
+                bias: Default::default(),
+            }),
+            multisample: Default::default(),
+            fragment: Some(FragmentState { 
+                module: &wireframe_shader,
+                entry_point: None,
+                compilation_options: Default::default(),
+                targets: &[Some(ColorTargetState {
+                    format: TextureFormat::Rgba16Float,
+                    blend: None,
+                    write_mask: Default::default(),
+                })],
+            }),
+            multiview: None,
+            cache: None,
+        });
+
 
         // Projection matrix for all vertecies in the scene
         let projection_matrix = Mat4::perspective_rh_gl(
@@ -265,11 +313,13 @@ impl Renderer<'_> {
         let (depth_texture, depth_texture_view) = Self::create_depth_texture(&device, surface_configuration.width, surface_configuration.height);
 
         let buffered_meshes = HashMap::<u32, BufferedMesh>::new();
+
         Renderer { 
             surface,
             device,
             queue,
             pipeline,
+            wireframe_pipeline,
             mesh_bind_group_layout,
             projection_matrix,
             frame_bind_group,
@@ -313,7 +363,7 @@ impl Renderer<'_> {
     }
 
     // Render stuff, using pipeline
-    pub fn redraw(&self, world: &World) {
+    pub fn redraw(&self, world: &World, ids: Vec<u32>) {
         let tex = self.surface.get_current_texture().unwrap();
         let view = tex.texture.create_view(&Default::default());
         let mut encoder = self.device.create_command_encoder(&Default::default());
@@ -351,7 +401,8 @@ impl Renderer<'_> {
         render_pass.set_bind_group(1, &self.frame_bind_group, &[]);
         
         // Render each mesh
-        for id in world.meshes.keys().copied().into_iter() {
+        for id in ids {
+            println!("rendering {}", id);
             let mesh = world.meshes.get(&id).unwrap();
             let transform = world.transforms.get(&id).unwrap();
             let buffered_mesh= self.buffered_meshes.get(&id).unwrap();
@@ -368,7 +419,61 @@ impl Renderer<'_> {
         self.queue.submit(Some(encoder.finish()));
         tex.present();
     }
-    
+
+    pub fn render_wireframe(&self, world: &World, ids: Vec<usize>) {
+        let tex = self.surface.get_current_texture().unwrap();                           
+        let view = tex.texture.create_view(&Default::default());
+        let mut encoder = self.device.create_command_encoder(&Default::default());
+        
+        let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
+            label: Some("wireframe pass"),
+            color_attachments: &[Some(RenderPassColorAttachment {
+                view: &view,
+                depth_slice: None,
+                resolve_target: None,
+                ops: Operations {
+                    load: LoadOp::Clear(Color::BLACK),
+                    store: StoreOp::Store,
+                },
+            })],
+            depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
+                view: &self.depth_texture_view,
+                depth_ops: Some(Operations {
+                    load: LoadOp::Clear(1.0),
+                    store: StoreOp::Store,
+                }),
+                stencil_ops: None,
+            }),
+            timestamp_writes: None,
+            occlusion_query_set: None,
+        });
+
+        render_pass.set_pipeline(&self.wireframe_pipeline);
+        self.queue.write_buffer(
+            &self.view_buffer, 0,
+            bytemuck::cast_slice(&self.camera_transform.as_matrix().to_cols_array()),
+        );
+        render_pass.set_bind_group(0, &self.frame_bind_group, &[]);
+        
+        // Render each mesh
+        for id in world.meshes.keys().copied().into_iter() {
+            let mesh = world.meshes.get(&id).unwrap();
+            let transform = world.transforms.get(&id).unwrap();
+            let buffered_mesh = self.buffered_meshes.get(&id).unwrap();
+
+            self.queue.write_buffer(&buffered_mesh.transform_buffer, 0, bytemuck::cast_slice(&transform.as_matrix().to_cols_array()));
+
+            render_pass.set_vertex_buffer(0, buffered_mesh.vertex_buffer.slice(..));
+            render_pass.set_bind_group(1, &buffered_mesh.bind_group, &[]);
+            render_pass.set_index_buffer(buffered_mesh.index_buffer.slice(..), IndexFormat::Uint16);
+            render_pass.draw_indexed(0..mesh.indices.len() as u32, 0, 0..1);
+        }
+        drop(render_pass);
+
+        self.queue.submit(Some(encoder.finish()));
+        tex.present();
+
+    }
     // Mesh to exist in GPU memory
     pub fn create_buffered_mesh(&mut self, id: u32, mesh: &Mesh) {
         let transform_buffer = self.device.create_buffer_init(&BufferInitDescriptor {

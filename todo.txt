@@ -1,0 +1,6 @@
+- For debug renderer:
+- Takes in points from collision (anything?)
+- Reroutes renderer taking target and rendering wireframes
+- Owned by app?
+- Passed to collision
+- Make renderer do less, perhaps game.rs or app does more

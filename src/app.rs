@@ -1,3 +1,4 @@
+use crate::debug::debugger::{DebugCommand, Debugger};
 use crate::physics::mesh::Mesh;
 use crate::physics::world::World;
 use crate::rendering::renderer::Renderer;
@@ -21,7 +22,7 @@ use crate::physics::spatial_grid::SpatialGrid;
 // Amount of discrete physics steps per render step
 // Larger values are more precise, but take longer to process
 // 0 will disable physics
-const PHYSICS_SUBSTEPS_COUNT: u16 = 256;
+const PHYSICS_SUBSTEPS_COUNT: u16 = 16;
 // Time between render steps
 // 16,666,667 nanos is about 1/60th of a second
 const FRAME_TIME: Duration = Duration::from_nanos(16_666_667);
@@ -30,10 +31,12 @@ pub struct App<'a> {
     pub renderer: Option<Renderer<'a>>,
     pub window: Option<Arc<Window>>,
     pub world: World,
+    pub debug: Debugger,
     collision_grid: SpatialGrid,
     total_time: f32,
     last_time: Instant,
     time_accumulator: Duration,
+    paused: bool,
 }
 
 impl App<'_> {
@@ -42,10 +45,12 @@ impl App<'_> {
             renderer: None,
             window: None,
             world: World::new(),
+            debug: Debugger::new(),
             collision_grid: SpatialGrid::new(2.0),
             total_time: 0.0,
             last_time: Instant::now(),
             time_accumulator: Duration::ZERO,
+            paused: false,
         }
     }
 }
@@ -122,7 +127,12 @@ impl ApplicationHandler for App<'_> {
             WindowEvent::KeyboardInput { event, .. } => {
                 match (event.physical_key, event.state) {
                     (PhysicalKey::Code(KeyCode::Space), ElementState::Pressed) => {
-                        // self.step_frame = true;
+                        if self.paused {
+                            println!("Unpaused");
+                            self.paused = false;
+                        } else {
+                            self.debug.pause();
+                        }
                     }
                     _ => {}
                 }
@@ -133,39 +143,57 @@ impl ApplicationHandler for App<'_> {
     }
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
-        let now = Instant::now();
-        let frame_dt = now - self.last_time;
-        self.last_time = now;
+        if !self.paused {
+            let now = Instant::now();
+            let frame_dt = now - self.last_time;
+            self.last_time = now;
 
-        self.time_accumulator += frame_dt;
-        
-        // Physics loop, runs until its caught up with all the physics it must do
-        while self.time_accumulator >= FRAME_TIME {
-            let frame_start = Instant::now();
-            self.time_accumulator -= FRAME_TIME;
-
-            let time = Time {
-                total: self.total_time,
-                delta: FRAME_TIME.as_secs_f32(),
-            };
+            self.time_accumulator += frame_dt;
             
-            // Split physics up to make it less discrete
-            for _ in 0..PHYSICS_SUBSTEPS_COUNT {
-                self.collision_grid.recalculate_grid_and_collisions(&mut self.world);
-                self.world.do_physics_step(time.delta / PHYSICS_SUBSTEPS_COUNT as f32);
+            // Physics loop, runs until its caught up with all the physics it must do
+            while self.time_accumulator >= FRAME_TIME {
+                let frame_start = Instant::now();
+                self.time_accumulator -= FRAME_TIME;
+
+                let time = Time {
+                    total: self.total_time,
+                    delta: FRAME_TIME.as_secs_f32(),
+                };
+                
+                // Split physics up to make it less discrete
+                for _ in 0..PHYSICS_SUBSTEPS_COUNT {
+                    self.collision_grid.recalculate_grid_and_collisions(&mut self.world);
+                    self.world.do_physics_step(time.delta / PHYSICS_SUBSTEPS_COUNT as f32);
+                }
+
+                self.total_time += FRAME_TIME.as_secs_f32();
+
+                if frame_start.elapsed() > FRAME_TIME {
+                    // If loop consistently overruns, it may be time for some optimization
+                    println!("Loop overrun of {}ms", (frame_start.elapsed() - FRAME_TIME).as_millis());
+                }
             }
 
-            self.total_time += FRAME_TIME.as_secs_f32();
-
-            if frame_start.elapsed() > FRAME_TIME {
-                // If loop consistently overruns, it may be time for some optimization
-                println!("Loop overrun of {}ms", (frame_start.elapsed() - FRAME_TIME).as_millis());
+            // Render after physics is all done
+            if let Some(renderer) = &self.renderer {
+                renderer.redraw(&self.world, vec![0, 1, 2]);
+                //renderer.render_wireframe(&self.world, vec![0, 1]);
             }
+        } else {
+            self.last_time = Instant::now();
         }
-
-        // Render after physics is all done
-        if let Some(renderer) = &self.renderer {
-            renderer.redraw(&self.world);
+        for cmd in self.debug.cmds.drain(..) {
+            match cmd {
+                DebugCommand::Pause => {
+                    self.paused = true;
+                },
+                DebugCommand::RenderWireframe(mesh, color) => {
+                    if let Some(renderer) = &self.renderer {
+                        // renderer.render_wireframe(&self.world, vec![0, 1, 2]);
+                    }
+                },
+                DebugCommand::Log(msg) => println!("{}", msg),
+            }
         }
     }
 }

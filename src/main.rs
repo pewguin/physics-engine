@@ -6,6 +6,7 @@ use crate::physics::collider::{Box3, ColliderShape, Sphere};
 mod app;
 mod rendering;
 mod physics;
+mod debug;
 
 fn main() {
     env_logger::init();

@@ -1,12 +1,16 @@
 use std::collections::HashSet;
-use std::hash::Hash;
-use std::mem::swap;
-use std::ops::Mul;
 use glam::{Mat3, Quat, Vec3};
 use crate::rendering::transform::Transform;
 
 const GEOMETRIC_EPSILON: f32 = 0.000001;
 const MAX_EPA_ITERATIONS: u8 = 64;
+
+pub enum CollisionResult {
+    Ok(Vec3),
+    NoConvergence(Vec3), // returns best guess
+    NoCollision,
+}
+
 fn support(a: &dyn ColliderShape, b: &dyn ColliderShape, dir: Vec3) -> Vec3 {
     a.support(dir) - b.support(-dir)
 }
@@ -275,23 +279,23 @@ impl Polytope {
     }
 }
 // Uses expanding polytope algorithm
-fn find_mvt(a: Box<dyn ColliderShape>, b: Box<dyn ColliderShape>, mut polytope: Polytope) -> Vec3 {
+fn find_mvt(a: Box<dyn ColliderShape>, b: Box<dyn ColliderShape>, mut polytope: Polytope) -> CollisionResult {
     let mut best = Vec3::ZERO;
     for _ in 0..MAX_EPA_ITERATIONS {
         let (norm, dist) = polytope.closest_face_to_origin();
         best = norm * dist;
-        println!("norm: {:?}, dist: {:?}", norm, dist);
+        // println!("norm: {:?}, dist: {:?}", norm, dist);
         let support = support(a.as_ref(), b.as_ref(), norm);
 
         let d = support.dot(norm);
         if d - dist < GEOMETRIC_EPSILON {
-            return norm * dist;
+            return CollisionResult::Ok(norm * dist);
         } else {
             polytope.add_vertex(support);
         }
     }
-    println!("EPA didn't converge!");
-    best
+
+    CollisionResult::NoConvergence(best)
 }
 pub trait ColliderShape {
     // Function to return point on shape the furthest along a direction
@@ -300,7 +304,7 @@ pub trait ColliderShape {
     fn transform(&self, transform: &Transform) -> Box<dyn ColliderShape>;
 }
 // Uses GJK algorithm
-pub fn collides_with(a: Box<dyn ColliderShape>, b: Box<dyn ColliderShape>) -> Option<Vec3> {
+pub fn collides_with(a: Box<dyn ColliderShape>, b: Box<dyn ColliderShape>) -> CollisionResult {
     let mut dir = Vec3::X;
     let mut simplex = Vec::with_capacity(4);
     simplex.push(support(a.as_ref(), b.as_ref(), dir));
@@ -309,12 +313,12 @@ pub fn collides_with(a: Box<dyn ColliderShape>, b: Box<dyn ColliderShape>) -> Op
         let new = support(a.as_ref(), b.as_ref(), dir);
 
         if new.dot(dir) <= 0.0 {
-            return None;
+            return CollisionResult::NoCollision;
         }
         simplex.push(new);
         if simplex_contains_origin(&mut simplex) {
             let polytope = Polytope::from_simplex(simplex, a.as_ref(), b.as_ref());
-            return Some(find_mvt(a, b, polytope));
+            return find_mvt(a, b, polytope);
         }
         update_simplex(&mut simplex, &mut dir);
     }
