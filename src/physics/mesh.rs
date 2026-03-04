@@ -32,7 +32,7 @@ const CUBE_VERTEXES: [Vertex; 24] = [
     Vertex { position: [ 1.0, -1.0,  1.0], uv: [1.0, 1.0] },
     Vertex { position: [-1.0, -1.0,  1.0], uv: [0.0, 1.0] },
 ];
-const CUBE_INDICES: [usize; 36] = [
+const CUBE_INDICES: [u16; 36] = [
     0,  1,  2,  0,  2,  3,   // Front
     4,  5,  6,  4,  6,  7,   // Back
     8,  9, 10,  8, 10, 11,   // Left
@@ -43,7 +43,7 @@ const CUBE_INDICES: [usize; 36] = [
 #[derive(Clone)]
 pub struct Mesh {
     pub vertexes: Vec<Vertex>,
-    pub indices: Vec<usize>,
+    pub indices: Vec<u16>,
 }
 
 impl Mesh {

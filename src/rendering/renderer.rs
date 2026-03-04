@@ -4,6 +4,8 @@ use crate::rendering::buffered_mesh::BufferedMesh;
 use crate::rendering::time::Time;
 use crate::rendering::transform::Transform;
 use crate::rendering::vertex::Vertex;
+use crate::rendering::wireframe_mesh::WireframeMesh;
+use crate::rendering::wireframe_vertex::WireframeVertex;
 use futures::executor::block_on;
 use glam::{Mat4, Quat, Vec3};
 use std::borrow::Cow;
@@ -223,7 +225,7 @@ impl Renderer<'_> {
                 module: &wireframe_shader,
                 entry_point: None,
                 compilation_options: Default::default(),
-                buffers: &[Vertex::LAYOUT],
+                buffers: &[WireframeVertex::LAYOUT],
             },
             primitive: PrimitiveState {
                 cull_mode: None,
@@ -420,7 +422,7 @@ impl Renderer<'_> {
         tex.present();
     }
 
-    pub fn render_wireframe(&self, world: &World, ids: Vec<usize>) {
+    pub fn render_wireframe(&self, world: &World, ids: Vec<u32>) {
         let tex = self.surface.get_current_texture().unwrap();                           
         let view = tex.texture.create_view(&Default::default());
         let mut encoder = self.device.create_command_encoder(&Default::default());
@@ -456,17 +458,16 @@ impl Renderer<'_> {
         render_pass.set_bind_group(0, &self.frame_bind_group, &[]);
         
         // Render each mesh
-        for id in world.meshes.keys().copied().into_iter() {
+        for id in ids {
             let mesh = world.meshes.get(&id).unwrap();
             let transform = world.transforms.get(&id).unwrap();
-            let buffered_mesh = self.buffered_meshes.get(&id).unwrap();
+            let wire_mesh = self.create_wireframe_mesh(mesh);
 
-            self.queue.write_buffer(&buffered_mesh.transform_buffer, 0, bytemuck::cast_slice(&transform.as_matrix().to_cols_array()));
+            self.queue.write_buffer(&wire_mesh.transform_buffer, 0, bytemuck::cast_slice(&transform.as_matrix().to_cols_array()));
 
-            render_pass.set_vertex_buffer(0, buffered_mesh.vertex_buffer.slice(..));
-            render_pass.set_bind_group(1, &buffered_mesh.bind_group, &[]);
-            render_pass.set_index_buffer(buffered_mesh.index_buffer.slice(..), IndexFormat::Uint16);
-            render_pass.draw_indexed(0..mesh.indices.len() as u32, 0, 0..1);
+            render_pass.set_vertex_buffer(0, wire_mesh.vertex_buffer.slice(..));
+            render_pass.set_bind_group(1, &wire_mesh.bind_group, &[]);
+            render_pass.draw(0..mesh.indices.len() as u32, 0..1);
         }
         drop(render_pass);
 
@@ -505,6 +506,46 @@ impl Renderer<'_> {
             transform_buffer,
         };
         self.buffered_meshes.insert(id, bf_mesh);
+    }
+
+    pub fn create_wireframe_mesh(&self, mesh: &Mesh) -> WireframeMesh {
+        let transform_buffer = self.device.create_buffer_init(&BufferInitDescriptor {
+            label: Label::from("wireframe transform buffer"),
+            contents: &bytemuck::cast_slice(&Mat4::IDENTITY.to_cols_array()),
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        });
+        let mut vertexes = Vec::new();
+
+        for tri in mesh.indices.chunks(3) {
+            let a = mesh.vertexes[tri[0] as usize];
+            let b = mesh.vertexes[tri[1] as usize];
+            let c = mesh.vertexes[tri[2] as usize];
+
+            vertexes.push(WireframeVertex { position: a.position, barycentric: [1.0, 0.0, 0.0] });
+            vertexes.push(WireframeVertex { position: b.position, barycentric: [0.0, 1.0, 0.0] });
+            vertexes.push(WireframeVertex { position: c.position, barycentric: [1.0, 0.0, 1.0] });
+        }
+
+        WireframeMesh {
+            vertex_buffer: self.device.create_buffer_init(&BufferInitDescriptor {
+                label: Label::from("Vertex Buffer"),
+                contents: &bytemuck::cast_slice(&vertexes),
+                usage: BufferUsages::VERTEX,
+            }),
+            bind_group: self.device.create_bind_group(&BindGroupDescriptor {
+                label: Label::from("Mesh bindings"),
+                layout: &self.mesh_bind_group_layout,
+                entries: &[
+                    BindGroupEntry {
+                        binding: 0,
+                        resource: transform_buffer.as_entire_binding(),
+                    }
+                ],
+            }),
+            vertexes,
+            transform_buffer,
+        }
+
     }
 
     // Load texture from disc to GPU memory

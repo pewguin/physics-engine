@@ -176,8 +176,8 @@ impl ApplicationHandler for App<'_> {
 
             // Render after physics is all done
             if let Some(renderer) = &self.renderer {
-                renderer.redraw(&self.world, vec![0, 1, 2]);
-                //renderer.render_wireframe(&self.world, vec![0, 1]);
+                //renderer.redraw(&self.world, vec![0, 1, 2]);
+                renderer.render_wireframe(&self.world, vec![0, 1, 2]);
             }
         } else {
             self.last_time = Instant::now();
