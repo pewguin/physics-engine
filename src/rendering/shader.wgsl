@@ -11,18 +11,13 @@ struct Matrix {
 // G2: Mesh Bindings
 //   B0: Model matrix
 
-@group(0) @binding(0)
-var obama: texture_2d<f32>;
-@group(0) @binding(1)
-var obama_sampler: sampler;
+@group(0) @binding(0) var obama: texture_2d<f32>;
+@group(0) @binding(1) var obama_sampler: sampler;
 
-@group(1) @binding(0)
-var<uniform> view_matrix: Matrix;
-@group(1) @binding(1)
-var<uniform> projection_matrix: Matrix;
+@group(1) @binding(0) var<uniform> view_matrix: Matrix;
+@group(1) @binding(1) var<uniform> projection_matrix: Matrix;
 
-@group(2) @binding(0)
-var<uniform> model_matrix: Matrix;
+@group(2) @binding(0) var<uniform> model_matrix: Matrix;
 
 struct VertexInput {
     @location(0) pos: vec3<f32>,

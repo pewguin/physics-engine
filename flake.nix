@@ -24,7 +24,7 @@
 	    			rust-analyzer
 	  			];
 
-					RUST_LOG = "debug";
+					RUST_LOG = "warn";
 					RUST_SRC_PATH =
           	"${pkgs.rust.packages.stable.rustPlatform.rustLibSrc}";
         	LD_LIBRARY_PATH = libPath;

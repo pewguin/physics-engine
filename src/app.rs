@@ -170,7 +170,8 @@ impl ApplicationHandler for App<'_> {
 
                 if frame_start.elapsed() > FRAME_TIME {
                     // If loop consistently overruns, it may be time for some optimization
-                    println!("Loop overrun of {}ms", (frame_start.elapsed() - FRAME_TIME).as_millis());
+                    // println!("Loop overrun of {}ms", (frame_start.elapsed() - FRAME_TIME).as_millis());
+                    // I highkey don't care
                 }
             }
 

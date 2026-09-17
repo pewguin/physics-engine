@@ -1,13 +1,12 @@
 use crate::physics::mesh::Mesh;
 use crate::physics::world::World;
 use crate::rendering::buffered_mesh::BufferedMesh;
-use crate::rendering::time::Time;
 use crate::rendering::transform::Transform;
 use crate::rendering::vertex::Vertex;
 use crate::rendering::wireframe_mesh::WireframeMesh;
 use crate::rendering::wireframe_vertex::WireframeVertex;
 use futures::executor::block_on;
-use glam::{Mat4, Quat, Vec3};
+use glam::{Mat4, Quat, UVec2, Vec3};
 use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Arc;
@@ -18,20 +17,29 @@ use wgpu::{AddressMode, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry
 use winit::window::Window;
 
 pub struct Renderer<'a> {
+    // Control
     surface: Surface<'a>,
     device: Device,
     queue: Queue,
-    pipeline: RenderPipeline,
-    wireframe_pipeline: RenderPipeline,
-    mesh_bind_group_layout: BindGroupLayout,
+
+    // Camera
     projection_matrix: Mat4,
+    camera_transform: Transform,
+
+    // Buffer
     projection_buffer: Buffer,
     view_buffer: Buffer,
+    viewport_buffer: Buffer,
+
+    // BindGroup
     frame_bind_group: BindGroup,
     texture_bind_group: BindGroup,
+
+    // Depth texture
     depth_texture: Texture,
     depth_texture_view: TextureView,
-    camera_transform: Transform,
+
+    // Meshes
     buffered_meshes: HashMap<u32, BufferedMesh>,
 }
 
@@ -69,11 +77,12 @@ impl Renderer<'_> {
                 }),
         ).unwrap();
 
+        let surface_inital_size = UVec2::new(300, 300);
         let surface_configuration = SurfaceConfiguration {
             usage: TextureUsages::RENDER_ATTACHMENT,
             format: TextureFormat::Rgba16Float,
-            width: 300,
-            height: 300,
+            width: surface_inital_size.x,
+            height: surface_inital_size.y,
             present_mode: PresentMode::Fifo,
             desired_maximum_frame_latency: 2,
             alpha_mode: Default::default(),
@@ -118,7 +127,7 @@ impl Renderer<'_> {
         let frame_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Label::from("Global bindings"),
             entries: &[
-                // View
+                // View (matrix to transform mesh to be camera-relative)
                 BindGroupLayoutEntry {
                     binding: 0,
                     visibility: ShaderStages::VERTEX,
@@ -129,9 +138,20 @@ impl Renderer<'_> {
                     },
                     count: None,
                 },
-                // Project
+                // Project (matrix to project the mesh onto 2D)
                 BindGroupLayoutEntry {
                     binding: 1,
+                    visibility: ShaderStages::VERTEX,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Viewport (size of the viewport)
+                BindGroupLayoutEntry {
+                    binding: 2,
                     visibility: ShaderStages::VERTEX,
                     ty: BindingType::Buffer {
                         ty: BufferBindingType::Uniform,
@@ -170,6 +190,36 @@ impl Renderer<'_> {
             ],
         });
 
+        let wireframe_mesh_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
+            label: Label::from("Wireframe mesh bindings layout"),
+            entries: &[
+                // Model matrix
+                BindGroupLayoutEntry {
+                    binding: 0,
+                    visibility: ShaderStages::VERTEX,
+                    ty: BindingType::Buffer {
+                        ty: BufferBindingType::Uniform,
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+                // Positions array
+                BindGroupLayoutEntry {
+                    binding: 1,
+                    visibility: ShaderStages::VERTEX,
+                    ty: BindingType::Buffer { 
+                        ty: BufferBindingType::Storage { 
+                            read_only: true 
+                        }, 
+                        has_dynamic_offset: false,
+                        min_binding_size: None,
+                    },
+                    count: None,
+                },
+            ],
+        });
+
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Label::from("Pipeline layout"),
             bind_group_layouts: &[&texture_bind_group_layout, &frame_bind_group_layout, &mesh_bind_group_layout,],
@@ -178,11 +228,11 @@ impl Renderer<'_> {
 
         let wireframe_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Label::from("Wireframe pipeline"),
-            bind_group_layouts: &[&frame_bind_group_layout, &mesh_bind_group_layout,],
+            bind_group_layouts: &[&frame_bind_group_layout, &wireframe_mesh_bind_group_layout,],
             push_constant_ranges: &[],
         });
         
-        // Render pipeline for main screen, uses depth texture
+        // Render pipeline for main screen
         let pipeline = device.create_render_pipeline(&RenderPipelineDescriptor {
             label: Some("Main pipeline"),
             layout: Some(&pipeline_layout),
@@ -257,7 +307,7 @@ impl Renderer<'_> {
         // Projection matrix for all vertecies in the scene
         let projection_matrix = Mat4::perspective_rh_gl(
             90.0_f32.to_radians(),
-            1.0, // Incorrect, but not known at this time
+            1.0,
             0.0001,
             3000.0,
         );
@@ -277,6 +327,16 @@ impl Renderer<'_> {
             label: Label::from("View buffer"),
             contents: &bytemuck::cast_slice(&camera_transform.as_matrix().to_cols_array()),
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        });
+        let viewport_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Label::from("Viewport buffer"),
+            contents: &bytemuck::cast_slice(bytemuck::bytes_of(&surface_inital_size)),
+            usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        });
+        let wireframe_positions_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Label::from("Wireframe positions buffer"),
+            contents: bytemuck::bytes_of(&0),
+            usage: BufferUsages::STORAGE | BufferUsages::COPY_DST,
         });
 
         // Bindings for all meshes each frame
@@ -320,8 +380,10 @@ impl Renderer<'_> {
             surface,
             device,
             queue,
+
             pipeline,
             wireframe_pipeline,
+
             mesh_bind_group_layout,
             projection_matrix,
             frame_bind_group,
@@ -330,7 +392,9 @@ impl Renderer<'_> {
             camera_transform,
             projection_buffer,
             view_buffer,
+            viewport_buffer,
             texture_bind_group,
+
             buffered_meshes,
         }
     }
@@ -357,7 +421,8 @@ impl Renderer<'_> {
             3000.0,
         );
 
-        self.queue.write_buffer(&self.projection_buffer, 0, &bytemuck::cast_slice(&self.projection_matrix.to_cols_array()));
+        self.queue.write_buffer(&self.projection_buffer, 0, bytemuck::cast_slice(&self.projection_matrix.to_cols_array()));
+        self.queue.write_buffer(&self.viewport_buffer, 0, bytemuck::bytes_of(&[width, height]));
 
         let (depth_texture, depth_texture_view) = Self::create_depth_texture(&self.device, width, height);
         self.depth_texture = depth_texture;
@@ -473,8 +538,8 @@ impl Renderer<'_> {
 
         self.queue.submit(Some(encoder.finish()));
         tex.present();
-
     }
+
     // Mesh to exist in GPU memory
     pub fn create_buffered_mesh(&mut self, id: u32, mesh: &Mesh) {
         let transform_buffer = self.device.create_buffer_init(&BufferInitDescriptor {
@@ -521,9 +586,9 @@ impl Renderer<'_> {
             let b = mesh.vertexes[tri[1] as usize];
             let c = mesh.vertexes[tri[2] as usize];
 
-            vertexes.push(WireframeVertex { position: a.position, barycentric: [1.0, 0.0, 0.0] });
-            vertexes.push(WireframeVertex { position: b.position, barycentric: [0.0, 1.0, 0.0] });
-            vertexes.push(WireframeVertex { position: c.position, barycentric: [1.0, 0.0, 1.0] });
+            vertexes.push(WireframeVertex { position: a.position, });
+            vertexes.push(WireframeVertex { position: b.position, });
+            vertexes.push(WireframeVertex { position: c.position, });
         }
 
         WireframeMesh {
