@@ -15,6 +15,7 @@
 					libGL
 					libxkbcommon
 					wayland
+					vulkan-loader
 				];
       in {
         devShells.default = pkgs.mkShell {

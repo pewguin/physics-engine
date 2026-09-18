@@ -50,22 +50,22 @@ impl Renderer<'_> {
     /// returns: Renderer
     pub fn new(window: Arc<Window>) -> Self {
         let wgpu = Instance::new(&InstanceDescriptor {
-            backends: Backends::GL,
+            backends: Backends::PRIMARY,
             flags: InstanceFlags::from_env_or_default(),
             memory_budget_thresholds: Default::default(),
             backend_options: Default::default(),
         });
 
         let surface = wgpu.create_surface(window).unwrap();
+    
+        let adapter = block_on(wgpu.request_adapter(&RequestAdapterOptions {
+            power_preference: PowerPreference::None,
+            force_fallback_adapter: false,
+            compatible_surface: Some(&surface),
+        })).unwrap();
 
         let (device, queue) = block_on(
-            block_on(wgpu.request_adapter(&RequestAdapterOptions {
-                power_preference: PowerPreference::None,
-                force_fallback_adapter: false,
-                compatible_surface: Some(&surface),
-            }))
-                .unwrap()
-                .request_device(&DeviceDescriptor {
+                adapter.request_device(&DeviceDescriptor {
                     label: Label::from("main"),
                     required_features: Default::default(),
                     required_limits: Default::default(),

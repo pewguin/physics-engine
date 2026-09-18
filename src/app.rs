@@ -72,9 +72,7 @@ impl ApplicationHandler for App<'_> {
         let window_attributes = WindowAttributes::default();
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
         self.window = Some(window.clone());
-        let renderer = Renderer::new(
-            window
-        );
+        let renderer = Renderer::new(window);
 
         let box_collider = Box3 {
             center: Vec3::ZERO,
@@ -138,6 +136,8 @@ impl ApplicationHandler for App<'_> {
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
+                self.renderer = None;
+                self.window = None;
             }
             WindowEvent::Resized(size) => {
                 if let Some(renderer) = self.renderer.as_mut() {
