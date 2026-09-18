@@ -1,15 +1,13 @@
 use std::borrow::Cow;
 
-use wgpu::{BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, Buffer, BufferBindingType, BufferUsages, ColorTargetState, CompareFunction, DepthStencilState, Device, FragmentState, Label, PipelineLayoutDescriptor, PrimitiveState, RenderPipeline, RenderPipelineDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages, TextureFormat, VertexState, util::{BufferInitDescriptor, DeviceExt}};
+use wgpu::{BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, BlendState, Buffer, BufferBindingType, BufferUsages, ColorTargetState, ColorWrites, CompareFunction, DepthStencilState, Device, FragmentState, Label, PipelineLayoutDescriptor, PrimitiveState, RenderPass, RenderPipeline, RenderPipelineDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages, TextureFormat, VertexState, util::{BufferInitDescriptor, DeviceExt}};
 
-use crate::rendering::wireframe_vertex::WireframeVertex;
+use crate::{physics::mesh::Mesh, rendering::{buffered_wireframe_mesh::BufferedWireframeMesh, transform::Transform, vertex::Vertex, wireframe_vertex::WireframeVertex}};
 
 pub struct WireframeRenderer {
     pipeline: RenderPipeline,
 
-    model_matrix_buffer: Buffer,
-    positions_buffer: Buffer,
-    mesh_bind_group: BindGroup
+    mesh_bind_group_layout: BindGroupLayout,
 }
 
 impl WireframeRenderer {
@@ -19,8 +17,6 @@ impl WireframeRenderer {
             source: ShaderSource::Wgsl(Cow::Borrowed(include_str!("wireframe.wgsl"))),
         });
 
-
-        // Layout for data passed to shader for each mesh. Updated per mesh.
         let mesh_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Label::from("Mesh bindings layout"),
             entries: &[
@@ -51,32 +47,6 @@ impl WireframeRenderer {
             ],
         });
 
-        let model_matrix_buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Label::from("Wireframe model matrix buffer"),
-            contents: &[0u8],
-            usage: BufferUsages::VERTEX | BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-        });
-
-        let positions_buffer = device.create_buffer_init(&BufferInitDescriptor {
-            label: Label::from("Wireframe positions buffer"),
-            contents: bytemuck::bytes_of(&0),
-            usage: BufferUsages::VERTEX | BufferUsages::STORAGE | BufferUsages::COPY_DST,
-        });
-
-        let mesh_bind_group = device.create_bind_group(&BindGroupDescriptor {
-            label: Label::from("Wireframe mesh bind group"),
-            layout: &mesh_bind_group_layout,
-            entries: &[
-                BindGroupEntry {
-                    binding: 0,
-                    resource: model_matrix_buffer.as_entire_binding(),
-                },
-                BindGroupEntry {
-                    binding: 1,
-                    resource: positions_buffer.as_entire_binding(),
-                },
-            ],
-        });
 
         let pipeline_layout = device.create_pipeline_layout(&PipelineLayoutDescriptor {
             label: Label::from("Pipeline layout"),
@@ -91,7 +61,7 @@ impl WireframeRenderer {
                 module: &wireframe_shader,
                 entry_point: None,
                 compilation_options: Default::default(),
-                buffers: &[WireframeVertex::LAYOUT],
+                buffers: &[],
             },
             primitive: PrimitiveState {
                 cull_mode: None,
@@ -111,8 +81,8 @@ impl WireframeRenderer {
                 compilation_options: Default::default(),
                 targets: &[Some(ColorTargetState {
                     format: TextureFormat::Rgba16Float,
-                    blend: None,
-                    write_mask: Default::default(),
+                    blend: Some(BlendState::ALPHA_BLENDING),
+                    write_mask: ColorWrites::ALL,
                 })],
             }),
             multiview: None,
@@ -123,13 +93,59 @@ impl WireframeRenderer {
         Self {
             pipeline,
 
-            model_matrix_buffer,
-            positions_buffer,
-            mesh_bind_group,
+            mesh_bind_group_layout,
         }
     }
 
-    // pub fn upload_mesh(&self, mesh: &Mesh) -> WireframeMesh {
-    //
-    // }
+    pub fn draw(&self, frame_bind_group: &BindGroup, render_pass: &mut RenderPass, mesh: &BufferedWireframeMesh) {
+        render_pass.set_pipeline(&self.pipeline);
+
+        render_pass.set_bind_group(0, frame_bind_group, &[]);
+        render_pass.set_bind_group(1, &mesh.mesh_bind_group, &[]);
+
+        render_pass.draw(0..mesh.position_count,  0..1);
+    }
+
+    pub fn upload_mesh(&self, device: &Device, mesh: &Mesh, transform: &Transform) -> BufferedWireframeMesh {
+        let transform_buffer = device.create_buffer_init(&BufferInitDescriptor {
+                label: Label::from("Wireframe transform buffer"),
+                contents: bytemuck::bytes_of(&transform.as_matrix().to_cols_array()),
+                usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
+        });
+
+        let verts: Vec<WireframeVertex> = mesh.indices.iter()
+            .map(|idx| {
+                let vert = mesh.vertexes[*idx as usize];
+                WireframeVertex { position: vert.position }
+            })
+            .collect();
+
+        let positions_buffer = device.create_buffer_init(&BufferInitDescriptor {
+            label: Label::from("Wireframe positions buffer"),
+            contents: bytemuck::cast_slice(&verts),
+            usage: BufferUsages::VERTEX | BufferUsages::STORAGE | BufferUsages::COPY_DST,
+        });
+
+        let mesh_bind_group = device.create_bind_group(&BindGroupDescriptor {
+            label: Label::from("Wireframe mesh bind group"),
+            layout: &self.mesh_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: transform_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: positions_buffer.as_entire_binding(),
+                },
+            ],
+        });
+        BufferedWireframeMesh {
+            positions_buffer,
+            transform_buffer,
+            position_count: verts.len() as u32,
+
+            mesh_bind_group,
+        }
+    }
 }

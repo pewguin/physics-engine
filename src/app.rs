@@ -92,6 +92,7 @@ impl ApplicationHandler for App<'_> {
         floor_transform.pos += Vec3::NEG_Z * 4.0;
         floor_transform.scale = Vec3::new(1.0, 0.1, 1.0) * 10.0;
         self.scene.register_mesh(id, renderer.upload_mesh(&floor, &floor_transform, Rc::clone(&obama)));
+        // self.scene.register_wireframe(id, renderer.upload_wireframe(&floor, &floor_transform));
         self.world.add_mesh(id, box_collider, floor_transform, floor);
         self.collision_grid.add_object(id, true);
         
@@ -103,6 +104,7 @@ impl ApplicationHandler for App<'_> {
         cube_transform.rot *= Quat::from_euler(EulerRot::XYZ, PI / 4.0, 0.0, PI / 4.0);
         let cube_rb = RigidBody::new(Vec3::ZERO, true, 0.98);
         self.scene.register_mesh(id, renderer.upload_mesh(&cube, &cube_transform, Rc::clone(&obama)));
+        self.scene.register_wireframe(id, renderer.upload_wireframe(&cube, &cube_transform));
         self.world.add_object(id, box_collider, cube_transform, cube, cube_rb);
         self.collision_grid.add_object(id, false);
 
@@ -118,6 +120,7 @@ impl ApplicationHandler for App<'_> {
         let mut sphere_transform = Transform::default();
         sphere_transform.pos = Vec3::new(0.0, 3.0, -5.0);
         self.scene.register_mesh(id, renderer.upload_mesh(&sphere, &sphere_transform, Rc::clone(&obama)));
+        self.scene.register_wireframe(id, renderer.upload_wireframe(&sphere, &sphere_transform));
         self.world.add_object(id, sphere_collider, sphere_transform, sphere, sphere_rb);
         self.collision_grid.add_object(id, false);
 

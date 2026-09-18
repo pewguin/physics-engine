@@ -6,7 +6,7 @@ use crate::rendering::material::Material;
 use crate::rendering::renderers::mesh_renderer::MeshRenderer;
 use crate::rendering::renderers::wireframe_renderer::{self, WireframeRenderer};
 use crate::rendering::transform::Transform;
-use crate::rendering::wireframe_mesh::WireframeMesh;
+use crate::rendering::buffered_wireframe_mesh::BufferedWireframeMesh;
 use futures::executor::block_on;
 use glam::{Mat4, Quat, UVec2, Vec3};
 use std::rc::Rc;
@@ -145,7 +145,7 @@ impl Renderer<'_> {
         });
         let viewport_buffer = device.create_buffer_init(&BufferInitDescriptor {
             label: Label::from("Viewport buffer"),
-            contents: &bytemuck::cast_slice(bytemuck::bytes_of(&surface_inital_size)),
+            contents: &bytemuck::bytes_of(&[surface_inital_size.x as f32, surface_inital_size.y as f32]),
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
         });
 
@@ -217,7 +217,7 @@ impl Renderer<'_> {
         self.camera.update_proj_matrix(width as f32, height as f32);
 
         self.queue.write_buffer(&self.projection_buffer, 0, bytemuck::cast_slice(&self.camera.projection_matrix.to_cols_array()));
-        self.queue.write_buffer(&self.viewport_buffer, 0, bytemuck::bytes_of(&[width, height]));
+        self.queue.write_buffer(&self.viewport_buffer, 0, bytemuck::bytes_of(&[width as f32, height as f32]));
         
         (self.depth_texture, self.depth_texture_view) = Self::create_depth_texture(&self.device, width, height);
     }
@@ -268,8 +268,8 @@ impl Renderer<'_> {
         self.mesh_renderer.draw(&self.frame_bind_group, render_pass, mesh);
     }
 
-    pub fn draw_wireframe(&self, render_pass: &mut RenderPass, mesh: &WireframeMesh) {
-        // self.wireframe_renderer.draw();
+    pub fn draw_wireframe(&self, render_pass: &mut RenderPass, mesh: &BufferedWireframeMesh) {
+        self.wireframe_renderer.draw(&self.frame_bind_group, render_pass, mesh);
     }
 
     pub fn present_frame(&self, frame: Frame) {
@@ -285,58 +285,13 @@ impl Renderer<'_> {
         self.queue.write_buffer(&mesh.transform_buffer, 0, bytemuck::bytes_of(&transform.as_matrix().to_cols_array()));
     }
 
-    // pub fn draw_wireframe(&self, ) {
-    //     let tex = self.surface.get_current_texture().unwrap();                           
-    //     let view = tex.texture.create_view(&Default::default());
-    //     let mut encoder = self.device.create_command_encoder(&Default::default());
-    //
-    //     let mut render_pass = encoder.begin_render_pass(&RenderPassDescriptor {
-    //         label: Some("wireframe pass"),
-    //         color_attachments: &[Some(RenderPassColorAttachment {
-    //             view: &view,
-    //             depth_slice: None,
-    //             resolve_target: None,
-    //             ops: Operations {
-    //                 load: LoadOp::Clear(Color::BLACK),
-    //                 store: StoreOp::Store,
-    //             },
-    //         })],
-    //         depth_stencil_attachment: Some(RenderPassDepthStencilAttachment {
-    //             view: &self.depth_texture_view,
-    //             depth_ops: Some(Operations {
-    //                 load: LoadOp::Clear(1.0),
-    //                 store: StoreOp::Store,
-    //             }),
-    //             stencil_ops: None,
-    //         }),
-    //         timestamp_writes: None,
-    //         occlusion_query_set: None,
-    //     });
-    //
-    //     render_pass.set_pipeline(&self.wireframe_pipeline);
-    //     self.queue.write_buffer(
-    //         &self.view_buffer, 0,
-    //         bytemuck::cast_slice(&self.camera_transform.as_matrix().to_cols_array()),
-    //     );
-    //     render_pass.set_bind_group(0, &self.frame_bind_group, &[]);
-    //
-    //     // Render each mesh
-    //     for id in ids {
-    //         let mesh = world.meshes.get(&id).unwrap();
-    //         let transform = world.transforms.get(&id).unwrap();
-    //         let wire_mesh = self.create_wireframe_mesh(mesh);
-    //
-    //         self.queue.write_buffer(&wire_mesh.transform_buffer, 0, bytemuck::cast_slice(&transform.as_matrix().to_cols_array()));
-    //
-    //         render_pass.set_vertex_buffer(0, wire_mesh.vertex_buffer.slice(..));
-    //         render_pass.set_bind_group(1, &wire_mesh.bind_group, &[]);
-    //         render_pass.draw(0..mesh.indices.len() as u32, 0..1);
-    //     }
-    //     drop(render_pass);
-    //
-    //     self.queue.submit(Some(encoder.finish()));
-    //     tex.present();
-    // }
+    pub fn upload_wireframe(&self, mesh: &Mesh, transform: &Transform) -> BufferedWireframeMesh {
+        self.wireframe_renderer.upload_mesh(&self.device, mesh, transform)
+    }
+
+    pub fn update_wireframe(&self, mesh: &BufferedWireframeMesh, transform: &Transform) {
+        self.queue.write_buffer(&mesh.transform_buffer, 0, bytemuck::bytes_of(&transform.as_matrix().to_cols_array()));
+    }
 
     pub fn create_material(&self, path: &str) -> Material {
         let (texture, texture_view, sampler) = self.load_texture(path);
@@ -362,45 +317,6 @@ impl Renderer<'_> {
         }
     }
     
-    // pub fn create_wireframe_mesh(&self, mesh: &Mesh) -> WireframeMesh {
-    //     let transform_buffer = self.device.create_buffer_init(&BufferInitDescriptor {
-    //         label: Label::from("wireframe transform buffer"),
-    //         contents: &bytemuck::cast_slice(&Mat4::IDENTITY.to_cols_array()),
-    //         usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
-    //     });
-    //     let mut vertexes = Vec::new();
-    //
-    //     for tri in mesh.indices.chunks(3) {
-    //         let a = mesh.vertexes[tri[0] as usize];
-    //         let b = mesh.vertexes[tri[1] as usize];
-    //         let c = mesh.vertexes[tri[2] as usize];
-    //
-    //         vertexes.push(WireframeVertex { position: a.position, });
-    //         vertexes.push(WireframeVertex { position: b.position, });
-    //         vertexes.push(WireframeVertex { position: c.position, });
-    //     }
-    //
-    //     WireframeMesh {
-    //         vertex_buffer: self.device.create_buffer_init(&BufferInitDescriptor {
-    //             label: Label::from("Vertex Buffer"),
-    //             contents: &bytemuck::cast_slice(&vertexes),
-    //             usage: BufferUsages::VERTEX,
-    //         }),
-    //         bind_group: self.device.create_bind_group(&BindGroupDescriptor {
-    //             label: Label::from("Mesh bindings"),
-    //             layout: &self.mesh_bind_group_layout,
-    //             entries: &[
-    //                 BindGroupEntry {
-    //                     binding: 0,
-    //                     resource: transform_buffer.as_entire_binding(),
-    //                 }
-    //             ],
-    //         }),
-    //         vertexes,
-    //         transform_buffer,
-    //     }
-    //
-    // }
 
     pub fn load_texture(&self, path: &str) -> (Texture, TextureView, Sampler) {
         let img = image::open(path).unwrap();

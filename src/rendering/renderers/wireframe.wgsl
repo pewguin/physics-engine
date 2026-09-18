@@ -9,7 +9,7 @@ struct Matrix {
 // G1: Mesh Bindings
 //   B0: Model matrix
 //   B1: Positions array
-// G2: Material Bindings
+// G2: Material Bindings (NOT BOUND)
 //   B0: Texture view
 //   B1: Sampler
 

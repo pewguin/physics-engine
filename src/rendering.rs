@@ -8,5 +8,5 @@ pub mod camera;
 pub mod material;
 pub mod scene;
 mod renderers;
-mod wireframe_mesh;
+mod buffered_wireframe_mesh;
 mod wireframe_vertex;
