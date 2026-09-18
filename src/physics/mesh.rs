@@ -1,4 +1,3 @@
-use glam::Vec3;
 use crate::rendering::vertex::Vertex;
 
 const CUBE_VERTEXES: [Vertex; 24] = [

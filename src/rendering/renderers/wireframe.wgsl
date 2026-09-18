@@ -9,6 +9,9 @@ struct Matrix {
 // G1: Mesh Bindings
 //   B0: Model matrix
 //   B1: Positions array
+// G2: Material Bindings
+//   B0: Texture view
+//   B1: Sampler
 
 @group(0) @binding(0) var<uniform> view_matrix: Matrix;
 @group(0) @binding(1) var<uniform> projection_matrix: Matrix;

@@ -20,17 +20,20 @@ impl World {
             colliders: HashMap::new(),
         }
     }
+
     pub fn add_mesh(&mut self, id: u32, collider_shape: impl ColliderShape + 'static, position: Transform, mesh: Mesh) {
         self.transforms.insert(id, position);
         self.colliders.insert(id, Box::new(collider_shape));
         self.meshes.insert(id, mesh);
     }
+
     pub fn add_object(&mut self, id: u32, collider_shape: impl ColliderShape + 'static, position: Transform, mesh: Mesh, rigid_body: RigidBody) {
         self.transforms.insert(id, position);
         self.colliders.insert(id, Box::new(collider_shape));
         self.rigid_bodies.insert(id, rigid_body);
         self.meshes.insert(id, mesh);
     }
+
     pub fn get_transformed_collider(&self, id: u32) -> Option<Box<dyn ColliderShape>> {
         if let Some(col) = self.colliders.get(&id) {
             if let Some(transform) = self.transforms.get(&id) {
@@ -39,6 +42,7 @@ impl World {
         }
         None
     }
+
     pub fn do_physics_step(&mut self, delta_time: f32) {
         for (id, rb) in self.rigid_bodies.iter_mut() {
             rb.step(self.transforms.get_mut(id).unwrap(), delta_time);

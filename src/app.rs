@@ -2,11 +2,13 @@ use crate::debug::debugger::{DebugCommand, Debugger};
 use crate::physics::mesh::Mesh;
 use crate::physics::world::World;
 use crate::rendering::renderer::Renderer;
+use crate::rendering::scene::Scene;
 use crate::rendering::time::Time;
 use crate::rendering::transform::Transform;
 use glam::{EulerRot, Quat, Vec3};
 use winit::keyboard::{KeyCode, PhysicalKey};
 use std::f32::consts::PI;
+use std::rc::Rc;
 use std::sync::{Arc, RwLock};
 use std::thread::sleep;
 use std::time::{Duration, Instant};
@@ -32,11 +34,13 @@ pub struct App<'a> {
     pub window: Option<Arc<Window>>,
     pub world: World,
     pub debug: Debugger,
+    scene: Scene,
     collision_grid: SpatialGrid,
     total_time: f32,
     last_time: Instant,
     time_accumulator: Duration,
     paused: bool,
+    current_id: u32,
 }
 
 impl App<'_> {
@@ -46,12 +50,20 @@ impl App<'_> {
             window: None,
             world: World::new(),
             debug: Debugger::new(),
+            scene: Scene::new(),
             collision_grid: SpatialGrid::new(2.0),
             total_time: 0.0,
             last_time: Instant::now(),
             time_accumulator: Duration::ZERO,
             paused: false,
+            current_id: 0,
         }
+    }
+
+    fn next_id(&mut self) -> u32 {
+        let rtr = self.current_id;
+        self.current_id += 1;
+        rtr
     }
 }
 
@@ -60,7 +72,7 @@ impl ApplicationHandler for App<'_> {
         let window_attributes = WindowAttributes::default();
         let window = Arc::new(event_loop.create_window(window_attributes).unwrap());
         self.window = Some(window.clone());
-        let mut renderer = Renderer::new(
+        let renderer = Renderer::new(
             window
         );
 
@@ -69,26 +81,30 @@ impl ApplicationHandler for App<'_> {
             rotation: Quat::IDENTITY,
             half_extents: Vec3::splat(0.5),
         };
+
+        let obama = Rc::new(renderer.create_material("assets/obama.webp"));
         
         // Create static floor
+        let id = self.next_id();
         let floor = Mesh::cube();
         let mut floor_transform = Transform::default();
         floor_transform.pos = Vec3::NEG_Y * 3.0;
         floor_transform.pos += Vec3::NEG_Z * 4.0;
         floor_transform.scale = Vec3::new(1.0, 0.1, 1.0) * 10.0;
-        renderer.create_buffered_mesh(0, &floor);
-        self.world.add_mesh(0, box_collider, floor_transform, floor);
-        self.collision_grid.add_object(0, true);
+        self.scene.register_mesh(id, renderer.upload_mesh(&floor, &floor_transform, Rc::clone(&obama)));
+        self.world.add_mesh(id, box_collider, floor_transform, floor);
+        self.collision_grid.add_object(id, true);
         
         // Create physics-influenced cube
+        let id = self.next_id();
         let cube = Mesh::cube();
         let mut cube_transform = Transform::default();
         cube_transform.pos = Vec3::NEG_Z * 5.0;
         cube_transform.rot *= Quat::from_euler(EulerRot::XYZ, PI / 4.0, 0.0, PI / 4.0);
-        renderer.create_buffered_mesh(1, &cube);
         let cube_rb = RigidBody::new(Vec3::ZERO, true, 0.98);
-        self.world.add_object(1, box_collider, cube_transform, cube, cube_rb);
-        self.collision_grid.add_object(1, false);
+        self.scene.register_mesh(id, renderer.upload_mesh(&cube, &cube_transform, Rc::clone(&obama)));
+        self.world.add_object(id, box_collider, cube_transform, cube, cube_rb);
+        self.collision_grid.add_object(id, false);
 
         let sphere_collider = Sphere {
             center: Vec3::ZERO,
@@ -96,13 +112,14 @@ impl ApplicationHandler for App<'_> {
         };
         
         // Create physics influenced sphere
+        let id = self.next_id();
         let sphere_rb = RigidBody::new(Vec3::ZERO, true, 0.98);
         let sphere = Mesh::cube();
         let mut sphere_transform = Transform::default();
         sphere_transform.pos = Vec3::new(0.0, 3.0, -5.0);
-        renderer.create_buffered_mesh(2, &sphere);
-        self.world.add_object(2, sphere_collider, sphere_transform, sphere, sphere_rb);
-        self.collision_grid.add_object(2, false);
+        self.scene.register_mesh(id, renderer.upload_mesh(&sphere, &sphere_transform, Rc::clone(&obama)));
+        self.world.add_object(id, sphere_collider, sphere_transform, sphere, sphere_rb);
+        self.collision_grid.add_object(id, false);
 
         self.collision_grid.calculate_all_static_object_occupancies(&self.world);
 
@@ -177,8 +194,12 @@ impl ApplicationHandler for App<'_> {
 
             // Render after physics is all done
             if let Some(renderer) = &self.renderer {
-                //renderer.redraw(&self.world, vec![0, 1, 2]);
-                renderer.render_wireframe(&self.world, vec![0, 1, 2]);
+                let mut frame = renderer.begin_frame();
+                {
+                    let mut pass = renderer.begin_pass(&mut frame);
+                    self.scene.render(&self.world, renderer, &mut pass);
+                }
+                renderer.present_frame(frame);
             }
         } else {
             self.last_time = Instant::now();
