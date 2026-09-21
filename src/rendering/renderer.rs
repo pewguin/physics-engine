@@ -37,7 +37,7 @@ pub struct Renderer<'a> {
     wireframe_renderer: WireframeRenderer,
 
     // Camera
-    camera: Camera,
+    pub camera: Camera,
 
     // Depth texture
     depth_texture: Texture,
@@ -148,7 +148,7 @@ impl Renderer<'_> {
         });
         let camera_transform_buffer = device.create_buffer_init(&BufferInitDescriptor {
             label: Label::from("View buffer"),
-            contents: &bytemuck::cast_slice(&camera.transform.as_matrix().to_cols_array()),
+            contents: &bytemuck::cast_slice(&camera.transform.as_matrix().inverse().to_cols_array()),
             usage: BufferUsages::UNIFORM | BufferUsages::COPY_DST,
         });
         let viewport_buffer = device.create_buffer_init(&BufferInitDescriptor {
@@ -243,7 +243,7 @@ impl Renderer<'_> {
 
         self.queue.write_buffer(
             &self.camera_transform_buffer, 0,
-            bytemuck::cast_slice(&self.camera.transform.as_matrix().to_cols_array()),
+            bytemuck::cast_slice(&self.camera.transform.as_matrix().inverse().to_cols_array()),
         );
 
         Frame {
@@ -301,6 +301,10 @@ impl Renderer<'_> {
 
     pub fn upload_wireframe(&self, mesh: &Mesh, transform: &Transform) -> BufferedWireframeMesh {
         self.wireframe_renderer.upload_mesh(&self.device, mesh, transform)
+    }
+
+    pub fn upload_wireframe_verts(&self, verts: &[Vec3]) -> BufferedWireframeMesh {
+        self.wireframe_renderer.upload_verts(&self.device, verts)
     }
 
     pub fn update_wireframe(&self, mesh: &BufferedWireframeMesh, transform: &Transform) {

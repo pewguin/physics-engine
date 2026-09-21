@@ -1,10 +1,11 @@
 use std::collections::HashSet;
 use glam::{Mat3, Quat, Vec3};
-use crate::rendering::transform::Transform;
+use crate::{debug::epa_debug::{self, Snapshot}, rendering::transform::Transform};
 
 const GEOMETRIC_EPSILON: f32 = 0.000001;
 const MAX_EPA_ITERATIONS: u8 = 64;
 
+#[derive(Debug)]
 pub enum CollisionResult {
     Ok(Vec3),
     NoConvergence(Vec3), // returns best guess
@@ -283,8 +284,17 @@ impl Polytope {
 
 }
 
+fn find_mvt_wrapper(a: Box<dyn ColliderShape>, b: Box<dyn ColliderShape>, mut polytope: Polytope) -> CollisionResult {
+    let mut snapshots: Vec<Snapshot> = Vec::new();
+    
+    let result = find_mvt(a, b, polytope, &mut snapshots);
+
+    epa_debug::finished(snapshots);
+    result
+}
+
 // Uses expanding polytope algorithm
-fn find_mvt(a: Box<dyn ColliderShape>, b: Box<dyn ColliderShape>, mut polytope: Polytope) -> CollisionResult {
+fn find_mvt(a: Box<dyn ColliderShape>, b: Box<dyn ColliderShape>, mut polytope: Polytope, snapshots: &mut Vec<Snapshot>) -> CollisionResult {
     let mut best = Vec3::ZERO;
     for _ in 0..MAX_EPA_ITERATIONS {
         let (norm, dist) = polytope.closest_face_to_origin();
@@ -296,6 +306,7 @@ fn find_mvt(a: Box<dyn ColliderShape>, b: Box<dyn ColliderShape>, mut polytope: 
         if d - dist < GEOMETRIC_EPSILON {
             return CollisionResult::Ok(norm * dist);
         } else {
+            snapshots.push(Snapshot { verts: polytope.vertexes.clone(), idx: polytope.indexes.clone() });
             polytope.add_vertex(support);
         }
     }
@@ -325,7 +336,7 @@ pub fn collides_with(a: Box<dyn ColliderShape>, b: Box<dyn ColliderShape>) -> Co
         simplex.push(new);
         if simplex_contains_origin(&mut simplex) {
             let polytope = Polytope::from_simplex(simplex, a.as_ref(), b.as_ref());
-            return find_mvt(a, b, polytope);
+            return find_mvt_wrapper(a, b, polytope);
         }
         update_simplex(&mut simplex, &mut dir);
     }

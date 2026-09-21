@@ -1,3 +1,6 @@
+use crate::debug::debug_draw::{self, DrawOrder};
+use crate::debug::debug_panel;
+use crate::debug::epa_debug::{self, Snapshot};
 use crate::physics::mesh::Mesh;
 use crate::physics::world::World;
 use crate::rendering::renderer::Renderer;
@@ -15,7 +18,7 @@ use winit::application::ApplicationHandler;
 use winit::event::{ElementState, WindowEvent};
 use winit::event_loop::ActiveEventLoop;
 use winit::window::{Window, WindowAttributes, WindowId};
-use crate::physics;
+use crate::physics::{self, collider};
 use crate::physics::collider::{Box3, Sphere};
 use crate::physics::rigid_body::RigidBody;
 use crate::physics::spatial_grid::SpatialGrid;
@@ -39,6 +42,9 @@ pub struct App<'a> {
     time_accumulator: Duration,
     paused: bool,
     current_id: u32,
+    
+    dbg_snapshots: Option<Vec<Snapshot>>,
+    snap_idx: usize,
 }
 
 impl App<'_> {
@@ -54,6 +60,9 @@ impl App<'_> {
             time_accumulator: Duration::ZERO,
             paused: false,
             current_id: 0,
+
+            dbg_snapshots: None,
+            snap_idx: 0,
         }
     }
 
@@ -71,57 +80,71 @@ impl ApplicationHandler for App<'_> {
         self.window = Some(window.clone());
         let renderer = Renderer::new(window);
 
-        let box_collider = Box3 {
-            center: Vec3::ZERO,
-            rotation: Quat::IDENTITY,
-            half_extents: Vec3::splat(0.5),
-        };
-
-        let obama = Rc::new(renderer.create_material("assets/obama.webp"));
-        
-        // Create static floor
-        let id = self.next_id();
-        let floor = Mesh::cube();
-        let mut floor_transform = Transform::default();
-        floor_transform.pos = Vec3::NEG_Y * 3.0;
-        floor_transform.pos += Vec3::NEG_Z * 4.0;
-        floor_transform.scale = Vec3::new(1.0, 0.1, 1.0) * 10.0;
-        self.scene.register_mesh(id, renderer.upload_mesh(&floor, &floor_transform, Rc::clone(&obama)));
-        // self.scene.register_wireframe(id, renderer.upload_wireframe(&floor, &floor_transform));
-        self.world.add_mesh(id, box_collider, floor_transform, floor);
-        self.collision_grid.add_object(id, true);
-        
-        // Create physics-influenced cube
-        let id = self.next_id();
-        let cube = Mesh::cube();
-        let mut cube_transform = Transform::default();
-        cube_transform.pos = Vec3::NEG_Z * 5.0;
-        cube_transform.rot *= Quat::from_euler(EulerRot::XYZ, PI / 4.0, 0.0, PI / 4.0);
-        let cube_rb = RigidBody::new(Vec3::ZERO, true, 1.0);
-        self.scene.register_mesh(id, renderer.upload_mesh(&cube, &cube_transform, Rc::clone(&obama)));
-        self.scene.register_wireframe(id, renderer.upload_wireframe(&cube, &cube_transform));
-        self.world.add_object(id, box_collider, cube_transform, cube, cube_rb);
-        self.collision_grid.add_object(id, false);
-
-        let sphere_collider = Sphere {
-            center: Vec3::ZERO,
-            radius: 0.5,
-        };
-        
-        // Create physics influenced sphere
-        let id = self.next_id();
-        let sphere_rb = RigidBody::new(Vec3::ZERO, true, 1.0);
-        let sphere = Mesh::cube();
-        let mut sphere_transform = Transform::default();
-        sphere_transform.pos = Vec3::new(0.0, 3.0, -5.0);
-        self.scene.register_mesh(id, renderer.upload_mesh(&sphere, &sphere_transform, Rc::clone(&obama)));
-        self.scene.register_wireframe(id, renderer.upload_wireframe(&sphere, &sphere_transform));
-        self.world.add_object(id, sphere_collider, sphere_transform, sphere, sphere_rb);
-        self.collision_grid.add_object(id, false);
-
-        self.collision_grid.calculate_all_static_object_occupancies(&self.world);
+        // let box_collider = Box3 {
+        //     center: Vec3::ZERO,
+        //     rotation: Quat::IDENTITY,
+        //     half_extents: Vec3::splat(0.5),
+        // };
+        //
+        // let obama = Rc::new(renderer.create_material("assets/obama.webp"));
+        //
+        // // Create static floor
+        // let id = self.next_id();
+        // let floor = Mesh::cube();
+        // let mut floor_transform = Transform::default();
+        // floor_transform.pos = Vec3::NEG_Y * 3.0;
+        // floor_transform.pos += Vec3::NEG_Z * 4.0;
+        // floor_transform.scale = Vec3::new(1.0, 0.1, 1.0) * 10.0;
+        // self.scene.register_mesh(id, renderer.upload_mesh(&floor, &floor_transform, Rc::clone(&obama)));
+        // // self.scene.register_wireframe(id, renderer.upload_wireframe(&floor, &floor_transform));
+        // self.world.add_mesh(id, box_collider, floor_transform, floor);
+        // self.collision_grid.add_object(id, true);
+        //
+        // // Create physics-influenced cube
+        // let id = self.next_id();
+        // let cube = Mesh::cube();
+        // let mut cube_transform = Transform::default();
+        // cube_transform.pos = Vec3::NEG_Z * 5.0;
+        // cube_transform.rot *= Quat::from_euler(EulerRot::XYZ, PI / 4.0, 0.0, PI / 4.0);
+        // let cube_rb = RigidBody::new(Vec3::ZERO, true, 1.0);
+        // self.scene.register_mesh(id, renderer.upload_mesh(&cube, &cube_transform, Rc::clone(&obama)));
+        // self.scene.register_wireframe(id, renderer.upload_wireframe(&cube, &cube_transform));
+        // self.world.add_object(id, box_collider, cube_transform, cube, cube_rb);
+        // self.collision_grid.add_object(id, false);
+        //
+        // let sphere_collider = Sphere {
+        //     center: Vec3::ZERO,
+        //     radius: 0.5,
+        // };
+        //
+        // // Create physics influenced sphere
+        // let id = self.next_id();
+        // let sphere_rb = RigidBody::new(Vec3::ZERO, true, 1.0);
+        // let sphere = Mesh::cube();
+        // let mut sphere_transform = Transform::default();
+        // sphere_transform.pos = Vec3::new(0.0, 3.0, -5.0);
+        // self.scene.register_mesh(id, renderer.upload_mesh(&sphere, &sphere_transform, Rc::clone(&obama)));
+        // self.scene.register_wireframe(id, renderer.upload_wireframe(&sphere, &sphere_transform));
+        // self.world.add_object(id, sphere_collider, sphere_transform, sphere, sphere_rb);
+        // self.collision_grid.add_object(id, false);
+        //
+        // self.collision_grid.calculate_all_static_object_occupancies(&self.world);
 
         self.renderer = Some(renderer);
+
+        let collider_a = Box3 {
+            center: Vec3::ZERO,
+            rotation: Quat::IDENTITY,
+            half_extents: Vec3 { x: 0.5, y: 0.5, z: 0.5 }
+        };
+
+        let collider_b = Box3 {
+            center: Vec3 { x: 0.25, y: 0.5, z: 0.25 },
+            rotation: Quat::IDENTITY,
+            half_extents: Vec3 { x: 0.5, y: 0.5, z: 0.5 }
+        };
+
+        println!("was collison? {:?}", collider::collides_with(Box::new(collider_a), Box::new(collider_b)));
     }
 
     fn window_event(
@@ -161,46 +184,92 @@ impl ApplicationHandler for App<'_> {
 
     fn about_to_wait(&mut self, event_loop: &ActiveEventLoop) {
         if !self.paused {
-            let now = Instant::now();
-            let frame_dt = now - self.last_time;
-            self.last_time = now;
+            // let now = Instant::now();
+            // let frame_dt = now - self.last_time;
+            // self.last_time = now;
+            //
+            // self.time_accumulator += frame_dt;
+            //
+            // // Physics loop, runs until its caught up with all the physics it must do
+            // while self.time_accumulator >= FRAME_TIME {
+            //     let frame_start = Instant::now();
+            //     self.time_accumulator -= FRAME_TIME;
+            //
+            //     let time = Time {
+            //         total: self.total_time,
+            //         delta: FRAME_TIME.as_secs_f32(),
+            //     };
+            //
+            //     // Split physics up to make it less discrete
+            //     for _ in 0..PHYSICS_SUBSTEPS_COUNT {
+            //         self.collision_grid.recalculate_grid_and_collisions(&mut self.world);
+            //         self.world.do_physics_step(time.delta / PHYSICS_SUBSTEPS_COUNT as f32);
+            //     }
+            //
+            //     self.total_time += FRAME_TIME.as_secs_f32();
+            //
+            //     if frame_start.elapsed() > FRAME_TIME {
+            //         // If loop consistently overruns, it may be time for some optimization
+            //         // println!("Loop overrun of {}ms", (frame_start.elapsed() - FRAME_TIME).as_millis());
+            //         // I highkey don't care
+            //     }
+            // }
 
-            self.time_accumulator += frame_dt;
-            
-            // Physics loop, runs until its caught up with all the physics it must do
-            while self.time_accumulator >= FRAME_TIME {
-                let frame_start = Instant::now();
-                self.time_accumulator -= FRAME_TIME;
+            // // Render after physics is all done
+            // if let (Some(renderer), Some(window)) = (&mut self.renderer, &self.window) {
+            //     renderer.camera.transform = std::mem::take(&mut renderer.camera.transform).with_pos(Vec3 {
+            //         x: debug_panel::slider("cam/x", -10.0, 10.0),
+            //         y: debug_panel::slider("cam/y", -10.0, 10.0),
+            //         z: debug_panel::slider("cam/z", -10.0, 10.0),
+            //     });
+            //     let mut frame = renderer.begin_frame();
+            //     {
+            //         let mut pass = renderer.begin_pass(&mut frame);
+            //         self.scene.render(&self.world, renderer, &mut pass);
+            //
+            //         for order in debug_draw::get_orders() {
+            //             match order {
+            //                 DrawOrder::Wireframe(verts) => {
+            //                     let mesh = renderer.upload_wireframe_verts(&verts);
+            //                     renderer.draw_wireframe(&mut pass, &mesh);
+            //                 }
+            //             }
+            //         }
+            //     }
+            //     renderer.draw_debug_ui(window, &mut frame);
+            //     renderer.present_frame(frame);
+            // }
 
-                let time = Time {
-                    total: self.total_time,
-                    delta: FRAME_TIME.as_secs_f32(),
-                };
-                
-                // Split physics up to make it less discrete
-                for _ in 0..PHYSICS_SUBSTEPS_COUNT {
-                    self.collision_grid.recalculate_grid_and_collisions(&mut self.world);
-                    self.world.do_physics_step(time.delta / PHYSICS_SUBSTEPS_COUNT as f32);
-                }
-
-                self.total_time += FRAME_TIME.as_secs_f32();
-
-                if frame_start.elapsed() > FRAME_TIME {
-                    // If loop consistently overruns, it may be time for some optimization
-                    // println!("Loop overrun of {}ms", (frame_start.elapsed() - FRAME_TIME).as_millis());
-                    // I highkey don't care
-                }
+            let epa = epa_debug::take_finished();
+            if matches!(epa, Some(_)) {
+                self.dbg_snapshots = epa;
             }
-
-            // Render after physics is all done
-            if let (Some(renderer), Some(window)) = (&mut self.renderer, &self.window) {
+            if let (Some(renderer), Some(window), Some(snaps)) = (&mut self.renderer, &self.window, &self.dbg_snapshots) {
+                let snapshot = &snaps[self.snap_idx];
+                if debug_panel::button("next frame") {
+                    self.snap_idx += 1;
+                    if self.snap_idx > snaps.len() {
+                        self.snap_idx = 0;
+                    }
+                }
                 let mut frame = renderer.begin_frame();
                 {
                     let mut pass = renderer.begin_pass(&mut frame);
-                    self.scene.render(&self.world, renderer, &mut pass);
+                    let verts: Vec<Vec3> = snapshot.idx.iter()
+                        .map(|idx| {
+                            snapshot.verts[*idx as usize]
+                        })
+                        .collect();
+
+                    renderer.draw_wireframe(&mut pass, &renderer.upload_wireframe_verts(&verts));
                 }
                 renderer.draw_debug_ui(window, &mut frame);
                 renderer.present_frame(frame);
+                renderer.camera.transform = std::mem::take(&mut renderer.camera.transform).with_pos(Vec3 {
+                    x: debug_panel::slider("cam/x", -10.0, 10.0),
+                    y: debug_panel::slider("cam/y", -10.0, 10.0),
+                    z: debug_panel::slider("cam/z", -10.0, 10.0),
+                });
             }
         } else {
             self.last_time = Instant::now();

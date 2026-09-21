@@ -1,5 +1,6 @@
 use std::borrow::Cow;
 
+use glam::Vec3;
 use wgpu::{BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingType, BlendState, Buffer, BufferBindingType, BufferUsages, ColorTargetState, ColorWrites, CompareFunction, DepthStencilState, Device, FragmentState, Label, PipelineLayoutDescriptor, PrimitiveState, RenderPass, RenderPipeline, RenderPipelineDescriptor, ShaderModuleDescriptor, ShaderSource, ShaderStages, TextureFormat, VertexState, util::{BufferInitDescriptor, DeviceExt}};
 
 use crate::{physics::mesh::Mesh, rendering::{buffered_wireframe_mesh::BufferedWireframeMesh, transform::Transform, vertex::Vertex, wireframe_vertex::WireframeVertex}};
@@ -106,6 +107,42 @@ impl WireframeRenderer {
         render_pass.draw(0..mesh.position_count,  0..1);
     }
 
+    pub fn upload_verts(&self, device: &Device, verts: &[Vec3]) -> BufferedWireframeMesh {
+        let transform_buffer = device.create_buffer_init(&BufferInitDescriptor { 
+            label: Label::from("Wireframe empty transform buffer"),
+            contents: bytemuck::cast_slice(&Transform::default().as_matrix().to_cols_array()),
+            usage: BufferUsages::UNIFORM,
+        });
+
+        let positions_buffer = device.create_buffer_init(&BufferInitDescriptor { 
+            label: Label::from("Wireframe positions buffer"),
+            contents: bytemuck::cast_slice(verts),
+            usage: BufferUsages::VERTEX | BufferUsages::STORAGE,
+        });
+
+        let mesh_bind_group = device.create_bind_group(&BindGroupDescriptor { 
+            label: Label::from("Wireframe bind group"),
+            layout: &self.mesh_bind_group_layout,
+            entries: &[
+                BindGroupEntry {
+                    binding: 0,
+                    resource: transform_buffer.as_entire_binding(),
+                },
+                BindGroupEntry {
+                    binding: 1,
+                    resource: positions_buffer.as_entire_binding(),
+                },
+            ],
+        });
+
+        BufferedWireframeMesh { 
+            transform_buffer,
+            positions_buffer, 
+            position_count: verts.len() as u32,
+            mesh_bind_group,
+        }
+    }
+
     pub fn upload_mesh(&self, device: &Device, mesh: &Mesh, transform: &Transform) -> BufferedWireframeMesh {
         let transform_buffer = device.create_buffer_init(&BufferInitDescriptor {
                 label: Label::from("Wireframe transform buffer"),
@@ -123,7 +160,7 @@ impl WireframeRenderer {
         let positions_buffer = device.create_buffer_init(&BufferInitDescriptor {
             label: Label::from("Wireframe positions buffer"),
             contents: bytemuck::cast_slice(&verts),
-            usage: BufferUsages::VERTEX | BufferUsages::STORAGE | BufferUsages::COPY_DST,
+            usage: BufferUsages::VERTEX | BufferUsages::STORAGE,
         });
 
         let mesh_bind_group = device.create_bind_group(&BindGroupDescriptor {

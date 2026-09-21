@@ -13,12 +13,12 @@ struct Entry {
     kind: EntryKind,
 }
 
-struct DebugState {
+struct PanelState {
     entries: Vec<UiNode>,
     visible: bool,
 }
 
-static STATE: Mutex<DebugState> = Mutex::new(DebugState {
+static STATE: Mutex<PanelState> = Mutex::new(PanelState {
     entries: Vec::new(),
     visible: true,
 });
@@ -144,7 +144,7 @@ fn draw_leaf(ui: &mut egui::Ui, name: &str, kind: &mut EntryKind) {
     }
 }
 
-pub fn ui_tree(ui: &mut egui::Ui, nodes: &mut [UiNode]) {
+fn ui_tree(ui: &mut egui::Ui, nodes: &mut [UiNode]) {
     for (name, mut kind) in nodes.iter_mut().filter_map(|node| 
         match node.body { 
             UiBody::Leaf(ref mut k) => Some((node.name.clone(), k)),
