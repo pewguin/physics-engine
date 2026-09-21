@@ -1,4 +1,3 @@
-use crate::debug::debugger::{DebugCommand, Debugger};
 use crate::physics::mesh::Mesh;
 use crate::physics::world::World;
 use crate::rendering::renderer::Renderer;
@@ -33,7 +32,6 @@ pub struct App<'a> {
     pub renderer: Option<Renderer<'a>>,
     pub window: Option<Arc<Window>>,
     pub world: World,
-    pub debug: Debugger,
     scene: Scene,
     collision_grid: SpatialGrid,
     total_time: f32,
@@ -49,7 +47,6 @@ impl App<'_> {
             renderer: None,
             window: None,
             world: World::new(),
-            debug: Debugger::new(),
             scene: Scene::new(),
             collision_grid: SpatialGrid::new(2.0),
             total_time: 0.0,
@@ -100,7 +97,7 @@ impl ApplicationHandler for App<'_> {
         let mut cube_transform = Transform::default();
         cube_transform.pos = Vec3::NEG_Z * 5.0;
         cube_transform.rot *= Quat::from_euler(EulerRot::XYZ, PI / 4.0, 0.0, PI / 4.0);
-        let cube_rb = RigidBody::new(Vec3::ZERO, true, 0.98);
+        let cube_rb = RigidBody::new(Vec3::ZERO, true, 1.0);
         self.scene.register_mesh(id, renderer.upload_mesh(&cube, &cube_transform, Rc::clone(&obama)));
         self.scene.register_wireframe(id, renderer.upload_wireframe(&cube, &cube_transform));
         self.world.add_object(id, box_collider, cube_transform, cube, cube_rb);
@@ -113,7 +110,7 @@ impl ApplicationHandler for App<'_> {
         
         // Create physics influenced sphere
         let id = self.next_id();
-        let sphere_rb = RigidBody::new(Vec3::ZERO, true, 0.98);
+        let sphere_rb = RigidBody::new(Vec3::ZERO, true, 1.0);
         let sphere = Mesh::cube();
         let mut sphere_transform = Transform::default();
         sphere_transform.pos = Vec3::new(0.0, 3.0, -5.0);
@@ -133,6 +130,12 @@ impl ApplicationHandler for App<'_> {
         window_id: WindowId,
         event: WindowEvent,
     ) {
+        if let (Some(renderer), Some(window)) = (&mut self.renderer, &self.window) {
+            let resp = renderer.egui_event(window, &event);
+            if resp.consumed {
+                return;
+            }
+        }
         match event {
             WindowEvent::CloseRequested => {
                 event_loop.exit();
@@ -147,12 +150,6 @@ impl ApplicationHandler for App<'_> {
             WindowEvent::KeyboardInput { event, .. } => {
                 match (event.physical_key, event.state) {
                     (PhysicalKey::Code(KeyCode::Space), ElementState::Pressed) => {
-                        if self.paused {
-                            println!("Unpaused");
-                            self.paused = false;
-                        } else {
-                            self.debug.pause();
-                        }
                     }
                     _ => {}
                 }
@@ -196,29 +193,17 @@ impl ApplicationHandler for App<'_> {
             }
 
             // Render after physics is all done
-            if let Some(renderer) = &self.renderer {
+            if let (Some(renderer), Some(window)) = (&mut self.renderer, &self.window) {
                 let mut frame = renderer.begin_frame();
                 {
                     let mut pass = renderer.begin_pass(&mut frame);
                     self.scene.render(&self.world, renderer, &mut pass);
                 }
+                renderer.draw_debug_ui(window, &mut frame);
                 renderer.present_frame(frame);
             }
         } else {
             self.last_time = Instant::now();
-        }
-        for cmd in self.debug.cmds.drain(..) {
-            match cmd {
-                DebugCommand::Pause => {
-                    self.paused = true;
-                },
-                DebugCommand::RenderWireframe(mesh, color) => {
-                    if let Some(renderer) = &self.renderer {
-                        // renderer.render_wireframe(&self.world, vec![0, 1, 2]);
-                    }
-                },
-                DebugCommand::Log(msg) => println!("{}", msg),
-            }
         }
     }
 }

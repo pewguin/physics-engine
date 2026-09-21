@@ -1,1 +1,1 @@
-pub mod debugger;
+pub mod debug_panel;

@@ -1,5 +1,5 @@
 use glam::Vec3;
-use crate::rendering::transform::Transform;
+use crate::{debug::debug_panel, rendering::transform::Transform};
 
 const GRAVITY: Vec3 = Vec3::new(0.0, -9.80665, 0.0);
 pub enum CollisionType<'a> {
@@ -25,7 +25,7 @@ impl RigidBody {
         }
     }
     pub fn step(&mut self, body_transform: &mut Transform, delta_time: f32) {
-        let half_d_v = GRAVITY * delta_time * 0.5;
+        let half_d_v = GRAVITY * debug_panel::slider("physics/gravity", -10.0, 10.0) * delta_time * 0.5; // GRAVITY * delta_time * 0.5;
         if self.do_gravity {
             self.velocity += half_d_v;
         }
@@ -33,8 +33,10 @@ impl RigidBody {
         if self.do_gravity {
             self.velocity += half_d_v;
         }
+        debug_panel::show("physics/dt", delta_time);
     }
     pub fn collided(&mut self, other: &CollisionType) {
         self.velocity = -self.velocity * self.restitution;
+        debug_panel::show("physics/post-collision vel", self.velocity);
     }
 }

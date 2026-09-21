@@ -1,6 +1,7 @@
 use crate::physics::mesh::Mesh;
 use crate::rendering::buffered_mesh::BufferedMesh;
 use crate::rendering::camera::Camera;
+use crate::rendering::egui_layer::EguiLayer;
 use crate::rendering::frame::Frame;
 use crate::rendering::material::Material;
 use crate::rendering::renderers::mesh_renderer::MeshRenderer;
@@ -9,12 +10,15 @@ use crate::rendering::transform::Transform;
 use crate::rendering::buffered_wireframe_mesh::BufferedWireframeMesh;
 use futures::executor::block_on;
 use glam::{Mat4, Quat, UVec2, Vec3};
+use winit::event::WindowEvent;
 use std::rc::Rc;
 use std::sync::Arc;
 use wgpu::util::{BufferInitDescriptor, DeviceExt};
 use wgpu::wgt::{SamplerDescriptor, TextureDescriptor, TextureViewDescriptor};
-use wgpu::{AddressMode, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferBindingType, BufferUsages, Color, ColorTargetState, CompareFunction, DepthStencilState, Device, DeviceDescriptor, Extent3d, FilterMode, FragmentState, IndexFormat, Instance, InstanceDescriptor, InstanceFlags, Label, LoadOp, Operations, Origin3d, PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, Queue, RenderPass, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions, Sampler, SamplerBindingType, ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, Surface, SurfaceConfiguration, TexelCopyBufferLayout, TexelCopyTextureInfo, Texture, TextureAspect, TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView, TextureViewDimension, VertexState};
+use wgpu::{AddressMode, Backends, BindGroup, BindGroupDescriptor, BindGroupEntry, BindGroupLayout, BindGroupLayoutDescriptor, BindGroupLayoutEntry, BindingResource, BindingType, Buffer, BufferBindingType, BufferUsages, Color, ColorTargetState, CompareFunction, DepthStencilState, Device, DeviceDescriptor, ExperimentalFeatures, Extent3d, FilterMode, FragmentState, IndexFormat, Instance, InstanceDescriptor, InstanceFlags, Label, LoadOp, Operations, Origin3d, PipelineLayoutDescriptor, PowerPreference, PresentMode, PrimitiveState, Queue, RenderPass, RenderPassColorAttachment, RenderPassDepthStencilAttachment, RenderPassDescriptor, RenderPipeline, RenderPipelineDescriptor, RequestAdapterOptions, Sampler, SamplerBindingType, ShaderModuleDescriptor, ShaderSource, ShaderStages, StoreOp, Surface, SurfaceConfiguration, TexelCopyBufferLayout, TexelCopyTextureInfo, Texture, TextureAspect, TextureDimension, TextureFormat, TextureSampleType, TextureUsages, TextureView, TextureViewDimension, VertexState};
 use winit::window::Window;
+
+const TEXTURE_FORMAT: TextureFormat = TextureFormat::Rgba16Float;
 
 pub struct Renderer<'a> {
     // Control
@@ -38,6 +42,9 @@ pub struct Renderer<'a> {
     // Depth texture
     depth_texture: Texture,
     depth_texture_view: TextureView,
+
+    // Egui
+    egui_layer: EguiLayer,
 }
 
 impl Renderer<'_> {
@@ -56,7 +63,7 @@ impl Renderer<'_> {
             backend_options: Default::default(),
         });
 
-        let surface = wgpu.create_surface(window).unwrap();
+        let surface = wgpu.create_surface(window.clone()).unwrap();
     
         let adapter = block_on(wgpu.request_adapter(&RequestAdapterOptions {
             power_preference: PowerPreference::None,
@@ -71,19 +78,20 @@ impl Renderer<'_> {
                     required_limits: Default::default(),
                     memory_hints: Default::default(),
                     trace: Default::default(),
+                    experimental_features: ExperimentalFeatures::disabled(),
                 }),
         ).unwrap();
 
         let surface_inital_size = UVec2::new(300, 300);
         let surface_configuration = SurfaceConfiguration {
             usage: TextureUsages::RENDER_ATTACHMENT,
-            format: TextureFormat::Rgba16Float,
+            format: TEXTURE_FORMAT,
             width: surface_inital_size.x,
             height: surface_inital_size.y,
             present_mode: PresentMode::Fifo,
             desired_maximum_frame_latency: 2,
             alpha_mode: Default::default(),
-            view_formats: vec![TextureFormat::Rgba16Float],
+            view_formats: vec![TEXTURE_FORMAT],
         };
 
         surface.configure(
@@ -93,7 +101,7 @@ impl Renderer<'_> {
         
         let camera = Camera::new();
 
-        // Stuff that stays the same each frame
+        // Stuff that stays the same throughout each frame
         let frame_bind_group_layout = device.create_bind_group_layout(&BindGroupLayoutDescriptor {
             label: Label::from("Global bindings"),
             entries: &[
@@ -174,6 +182,9 @@ impl Renderer<'_> {
 
         let (depth_texture, depth_texture_view) = Self::create_depth_texture(&device, surface_inital_size.x, surface_inital_size.y);
 
+        let surface = wgpu.create_surface(window.clone()).unwrap();
+        let egui_layer = EguiLayer::new(&device, TEXTURE_FORMAT, &window);
+
         Renderer { 
             // Control
             surface,
@@ -196,6 +207,9 @@ impl Renderer<'_> {
             // Depth texture 
             depth_texture,
             depth_texture_view,
+
+            // egui
+            egui_layer
         }
     }
 
@@ -205,13 +219,13 @@ impl Renderer<'_> {
             &self.device,
             &SurfaceConfiguration {
                 usage: TextureUsages::RENDER_ATTACHMENT,
-                format: TextureFormat::Rgba16Float,
+                format: TEXTURE_FORMAT,
                 width,
                 height,
                 present_mode: PresentMode::Fifo,
                 desired_maximum_frame_latency: 2,
                 alpha_mode: Default::default(),
-                view_formats: vec![TextureFormat::Rgba16Float],
+                view_formats: vec![TEXTURE_FORMAT],
             }
         );
         self.camera.update_proj_matrix(width as f32, height as f32);
@@ -291,6 +305,16 @@ impl Renderer<'_> {
 
     pub fn update_wireframe(&self, mesh: &BufferedWireframeMesh, transform: &Transform) {
         self.queue.write_buffer(&mesh.transform_buffer, 0, bytemuck::bytes_of(&transform.as_matrix().to_cols_array()));
+    }
+
+    pub fn egui_event(&mut self, window: &Window, event: &WindowEvent) -> egui_winit::EventResponse {
+        self.egui_layer.on_window_event(window, event)
+    }
+
+    pub fn draw_debug_ui(&mut self, window: &Window, frame: &mut Frame) {
+        let tex = &frame.surface_texture.texture;
+        let size = [tex.width(), tex.height()];
+        self.egui_layer.draw(window, &self.device, &self.queue, &mut frame.encoder, &frame.view, size);
     }
 
     pub fn create_material(&self, path: &str) -> Material {

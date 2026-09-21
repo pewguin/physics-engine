@@ -7,6 +7,7 @@ pub mod frame;
 pub mod camera;
 pub mod material;
 pub mod scene;
+mod egui_layer;
 mod renderers;
 mod buffered_wireframe_mesh;
 mod wireframe_vertex;

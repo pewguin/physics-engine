@@ -1,0 +1,43 @@
+use std::sync::Mutex;
+
+use wgpu::Color;
+
+use crate::{physics::mesh::Mesh, rendering::renderer::Renderer};
+
+enum EntryType {
+    Text(String),
+    Button { clicked: bool },
+    Toggle(bool),
+    Slider { value: f32, min: f32, max: f32 },
+    Input(String),
+}
+
+struct Entry {
+    key: String,
+    entry_type: EntryType,
+}
+
+struct DebugState {
+    entries: Vec<Entry>,
+}
+
+static STATE: Mutex<DebugState> = Mutex::new(DebugState {
+    entries: Vec::new(),
+});
+
+fn with_entry<T>(key: &str, make_type: impl FnOnce() -> EntryType, set: impl FnOnce(&mut EntryType) -> T) -> T {
+    let mut s = STATE.lock().unwrap();
+    let i = match s.entries.iter().position(|e| e.key == key) {
+        Some(i) => i,
+        None => {
+            s.entries.push(Entry { key: key.to_owned(), entry_type: make_type() });
+            s.entries.len() - 1
+        },
+    };
+    set(&mut s.entries[i].entry_type)
+}
+
+pub fn label(key: &str, msg: impl Into<String>) {
+    with_entry(key, || EntryType::Text(String::new()), |k| *k = EntryType::Text(msg.into()));
+}
+

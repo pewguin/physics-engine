@@ -196,6 +196,7 @@ impl Polytope {
             ],
         }
     }
+
     fn closest_face_to_origin(&self) -> (Vec3, f32) {
         let mut closest_norm: Vec3 = Vec3::ZERO;
         let mut closest_dist = f32::MAX;
@@ -215,6 +216,7 @@ impl Polytope {
         }
         (closest_norm, closest_dist)
     }
+
     pub fn add_vertex(&mut self, vert: Vec3) {
         let mut horizon_edges: HashSet<(usize, usize)> = HashSet::new();
         let mut faces_to_remove = Vec::new();
@@ -264,6 +266,7 @@ impl Polytope {
             self.add_face(edge.0, edge.1, v_index);
         }
     }
+
     pub fn add_face(&mut self, a_i: usize, b_i: usize, c_i: usize) {
         let a = self.vertexes[a_i];
         let b = self.vertexes[b_i];
@@ -277,7 +280,9 @@ impl Polytope {
             self.indexes.extend_from_slice(&[a_i, b_i, c_i]);
         }
     }
+
 }
+
 // Uses expanding polytope algorithm
 fn find_mvt(a: Box<dyn ColliderShape>, b: Box<dyn ColliderShape>, mut polytope: Polytope) -> CollisionResult {
     let mut best = Vec3::ZERO;
@@ -297,12 +302,14 @@ fn find_mvt(a: Box<dyn ColliderShape>, b: Box<dyn ColliderShape>, mut polytope: 
 
     CollisionResult::NoConvergence(best)
 }
+
 pub trait ColliderShape {
     // Function to return point on shape the furthest along a direction
     fn support(&self, dir: Vec3) -> Vec3;
     fn get_aabb(&self) -> AABB;
     fn transform(&self, transform: &Transform) -> Box<dyn ColliderShape>;
 }
+
 // Uses GJK algorithm
 pub fn collides_with(a: Box<dyn ColliderShape>, b: Box<dyn ColliderShape>) -> CollisionResult {
     let mut dir = Vec3::X;
@@ -323,11 +330,13 @@ pub fn collides_with(a: Box<dyn ColliderShape>, b: Box<dyn ColliderShape>) -> Co
         update_simplex(&mut simplex, &mut dir);
     }
 }
+
 #[derive(Clone, Copy, Debug)]
 pub struct Sphere {
     pub radius: f32,
     pub center: Vec3,
 }
+
 impl ColliderShape for Sphere {
     fn support(&self, dir: Vec3) -> Vec3 {
         self.center + dir.normalize() * self.radius
@@ -346,11 +355,13 @@ impl ColliderShape for Sphere {
         })
     }
 }
+
 #[derive(Clone, Copy, Debug)]
 pub struct AABB {
     pub min: Vec3,
     pub max: Vec3,
 }
+
 impl ColliderShape for AABB {
     fn support(&self, dir: Vec3) -> Vec3 {
         Vec3::new(
@@ -369,12 +380,14 @@ impl ColliderShape for AABB {
         })
     }
 }
+
 #[derive(Clone, Copy, Debug)]
 pub struct Box3 {
     pub center: Vec3,
     pub rotation: Quat,
     pub half_extents: Vec3,
 }
+
 impl ColliderShape for Box3 {
     fn support(&self, dir: Vec3) -> Vec3 {
         let dir_local = self.rotation.conjugate() * dir;
@@ -406,3 +419,4 @@ impl ColliderShape for Box3 {
         })
     }
 }
+
